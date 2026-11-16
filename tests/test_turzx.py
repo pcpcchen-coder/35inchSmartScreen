@@ -44,6 +44,19 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual([bytes(call.args[1]) for call in device.write.call_args_list],
                          [command(197, 9, 11, 9, 11), b"\xe0\x07"])
 
+    def test_brightness_changes_even_when_the_frame_is_unchanged(self):
+        display = Display(None)
+        display.device = Mock()
+        display.device.write.side_effect = lambda endpoint, data, timeout: len(data)
+        frame = Image.new("RGB", (WIDTH, HEIGHT))
+        display.previous = frame
+
+        display.show(frame, brightness=60)
+        display.show(frame, brightness=60)
+        display.power_off()
+        self.assertEqual([bytes(call.args[1]) for call in display.device.write.call_args_list],
+                         [command(110, x=102), command(108)])
+
     def test_short_write_does_not_advance_the_cached_image(self):
         display = Display(None)
         display.device = Mock()

@@ -51,6 +51,7 @@ class Display:
         self.port = port
         self.device = None
         self.previous = None
+        self.brightness = None
 
     def close(self):
         if self.device is not None:
@@ -61,6 +62,7 @@ class Display:
             finally:
                 self.device = None
         self.previous = None
+        self.brightness = None
 
     def connect(self):
         self.device = find_device(self.port)
@@ -90,9 +92,16 @@ class Display:
         for offset in range(0, len(pixels), CHUNK_BYTES):
             self.send(pixels[offset:offset + CHUNK_BYTES])
 
-    def show(self, image):
+    def power_off(self):
+        if self.device is not None:
+            self.send(command(108))
+
+    def show(self, image, brightness=None):
         if self.device is None:
             self.connect()
+        if brightness is not None and brightness != self.brightness:
+            self.send(command(110, x=(100 - brightness) * 255 // 100))
+            self.brightness = brightness
 
         bounds = (0, 0, WIDTH, HEIGHT)
         if self.previous is not None:

@@ -13,6 +13,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from claude_usage import ClaudeUsage, read_usage
+from preferences import read_preferences
 from turzx import HEIGHT, WIDTH, Display
 from usage import CodexServer, UsageError, Window, daily_tokens, find_codex, quota_windows
 
@@ -26,7 +27,6 @@ SKY = "#8EBDFF"
 AMBER = "#FFD17F"
 RED = "#FF9C8F"
 CLAUDE = "#F5A987"
-PAGE_SECONDS = 20
 FONT_DIR = Path("/System/Library/Fonts")
 
 
@@ -199,6 +199,11 @@ def render(snapshot, now, demo=False):
 
 def render_claude(usage, now, demo=False):
     image, draw = page("Claude", "SUBSCRIPTION USAGE", CLAUDE)
+    if usage is None:
+        panel(draw, 96, 102)
+        label(draw, (27, 119), "Waiting for usage data", 21, TEXT, "bold")
+        label(draw, (27, 156), "Claude Code status line", 16, MUTED)
+        return image
     expired = any(window.reset_at <= now.timestamp() for window in usage.windows)
     if demo:
         badge(draw, "DEMO", SKY)
@@ -246,7 +251,7 @@ def demo_image(path, claude=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--interval", type=int, default=30, help="usage polling in seconds (default 30)")
+    parser.add_argument("--interval", type=int, help="override the saved usage polling interval (default 30)")
     parser.add_argument("--codex", help="path to the Codex executable")
     parser.add_argument("--port", help="USB device selector by serial path (default: autodetect)")
     parser.add_argument("--once", action="store_true", help="fetch and write one hardware frame")
@@ -258,7 +263,7 @@ def main():
     if args.preview or args.preview_claude:
         demo_image(args.preview or args.preview_claude, claude=bool(args.preview_claude))
         return 0
-    if args.interval < 10:
+    if args.interval is not None and args.interval < 10:
         parser.error("--interval must be at least 10 seconds")
     executable = args.codex or find_codex()
     if not executable:
@@ -270,9 +275,15 @@ def main():
     screen = Display(args.port)
     snapshot = Snapshot()
     started = time.monotonic()
-    next_poll = 0
+    last_poll = None
+    preferences = read_preferences()
     usb_offline = None
     stopping = False
+    refresh_requested = False
+
+    def request_refresh(_signum, _frame):
+        nonlocal refresh_requested
+        refresh_requested = True
 
     def stop(_signum, _frame):
         nonlocal stopping
@@ -280,19 +291,29 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGUSR1, request_refresh)
     try:
         while not stopping:
-            if time.monotonic() >= next_poll:
+            preferences = read_preferences()
+            mode = "chatgpt" if args.once else preferences.mode
+            interval = args.interval or preferences.poll_seconds
+            poll_due = last_poll is None or time.monotonic() >= last_poll + interval
+            if mode != "claude" and (refresh_requested or poll_due):
+                if refresh_requested:
+                    logging.info("Manual ChatGPT sync requested")
+                    refresh_requested = False
                 snapshot.refresh(server)
-                next_poll = time.monotonic() + args.interval
+                last_poll = time.monotonic()
+                if stopping:
+                    break
+
+            elapsed = time.monotonic() - started
+            now = datetime.now().astimezone()
+            rotate_to_claude = mode == "rotate" and int(elapsed // preferences.page_seconds) % 2
+            claude = read_usage() if mode == "claude" or rotate_to_claude else None
+            frame = render_claude(claude, now) if mode == "claude" or claude else render(snapshot, now)
             try:
-                now = datetime.now().astimezone()
-                on_claude_page = not args.once and int(
-                    (time.monotonic() - started) // PAGE_SECONDS
-                ) % 2
-                claude = read_usage() if on_claude_page else None
-                frame = render_claude(claude, now) if claude else render(snapshot, now)
-                screen.show(frame)
+                screen.show(frame, brightness=preferences.brightness)
             except OSError as error:
                 if usb_offline is not True or args.once:
                     logging.warning("USB display unavailable: %s", error)
@@ -305,10 +326,16 @@ def main():
             if args.once:
                 return int(usb_offline or bool(snapshot.errors))
             if not stopping:
-                time.sleep(min(5, max(0, next_poll - time.monotonic())))
+                time.sleep(2)
     finally:
-        screen.close()
-        server.close()
+        try:
+            if stopping and preferences.blank_on_stop:
+                screen.power_off()
+        except OSError as error:
+            logging.warning("Could not turn off the USB display: %s", error)
+        finally:
+            screen.close()
+            server.close()
     return 0
 
 

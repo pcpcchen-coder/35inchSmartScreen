@@ -1,13 +1,16 @@
 """Install or remove the per-user macOS LaunchAgent."""
 
 import argparse
+import json
 import os
 import plistlib
 import subprocess
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 
+from preferences import CHOICES, read_preferences, set_preference
 from usage import find_codex
 
 LABEL = "com.pcpcchen.35inchsmartscreen"
@@ -25,6 +28,18 @@ def launchctl(*args, quiet=False, check=True):
     )
 
 
+def bootstrap(plist):
+    # launchd can still be tearing down the previous job after bootout returns.
+    for attempt in range(6):
+        result = launchctl("bootstrap", DOMAIN, str(plist), quiet=True, check=False)
+        if result.returncode == 0:
+            return 0
+        if result.returncode != 5 or attempt == 5:
+            sys.stderr.buffer.write(result.stderr)
+            return result.returncode
+        time.sleep(1)
+
+
 def loaded():
     return launchctl("print", TARGET, quiet=True, check=False).returncode == 0
 
@@ -36,8 +51,28 @@ def unload():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("install", "status", "uninstall"))
+    parser.add_argument("action", choices=(
+        "install", "status", "uninstall", "menu-status", "set", "refresh",
+    ))
+    parser.add_argument("--dashboard-root", type=Path, default=ROOT)
+    parser.add_argument("--dashboard-python", default=sys.executable)
+    parser.add_argument("setting", nargs="?", choices=CHOICES)
+    parser.add_argument("value", nargs="?")
     args = parser.parse_args()
+
+    if args.action == "menu-status":
+        print(json.dumps({"enabled": PLIST.is_file() and loaded(), **asdict(read_preferences())}))
+        return 0
+    if args.action == "set":
+        if args.setting is None or args.value is None:
+            parser.error("set requires a setting and value")
+        try:
+            set_preference(args.setting, args.value)
+        except ValueError as error:
+            parser.error(str(error))
+        return 0
+    if args.action == "refresh":
+        return launchctl("kill", "SIGUSR1", TARGET, check=False).returncode
 
     if args.action == "status":
         return launchctl("print", TARGET, check=False).returncode
@@ -53,8 +88,10 @@ def main():
     LOG.parent.mkdir(parents=True, exist_ok=True)
     config = {
         "Label": LABEL,
-        "ProgramArguments": [sys.executable, str(ROOT / "dashboard.py"), "--codex", codex],
-        "WorkingDirectory": str(ROOT),
+        "ProgramArguments": [
+            args.dashboard_python, str(args.dashboard_root / "dashboard.py"), "--codex", codex,
+        ],
+        "WorkingDirectory": str(args.dashboard_root),
         "RunAtLoad": True,
         "KeepAlive": True,
         "ThrottleInterval": 10,
@@ -69,15 +106,9 @@ def main():
         temporary.write_bytes(data)
         temporary.replace(PLIST)
         launchctl("enable", TARGET)
-        # launchd can still be tearing down the previous job after bootout returns.
-        for attempt in range(6):
-            result = launchctl("bootstrap", DOMAIN, str(PLIST), quiet=True, check=False)
-            if result.returncode == 0:
-                break
-            if result.returncode != 5 or attempt == 5:
-                sys.stderr.buffer.write(result.stderr)
-                return result.returncode
-            time.sleep(1)
+        result = bootstrap(PLIST)
+        if result:
+            return result
     print(f"Dashboard service started. Log at {LOG}")
     return 0
 

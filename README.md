@@ -55,6 +55,24 @@ tail -n 30 ~/Library/Logs/35inchSmartScreen/dashboard.log
 
 要停止服務並取消自動啟動，執行 `.venv/bin/python service.py uninstall`。程式資料夾移動後，請從新位置重新執行安裝。
 
+## 從 macOS 選單列開關面板
+
+在已建好 Python 環境的專案目錄執行下列指令。建置選單列工具需要 Xcode 或其命令列工具。
+
+```sh
+.venv/bin/python install_menu.py install
+```
+
+安裝後點選右上角的 **SmartScreen 小螢幕圖示**。工具會在登入時開啟，即使面板目前停止，仍可從圖示重新啟動。
+
+- **啟動面板**會立刻開始並設定登入自動啟動。**停止面板**會結束更新並取消面板的登入自動啟動。
+- **立即同步 ChatGPT**會要求背景服務重新查詢。Claude 資料仍由 Claude Code 狀態列提供。
+- **顯示內容**可選 ChatGPT、Claude 或兩者輪播。只選 Claude 時，尚未接到資料會顯示等待畫面。
+- **同步間隔、輪播間隔與螢幕亮度**可直接調整。勾選 **停止面板時熄屏** 可在正常停止時關閉小螢幕。
+- **結束選單列工具**可暫時收起圖示。要再開啟，可從 Finder 開啟 `~/Applications/SmartScreen.app`。
+
+要解除選單列工具的安裝，執行 `.venv/bin/python install_menu.py uninstall`。面板本身請用 `service.py` 管理。
+
 ## 加上 Claude 用量
 
 ![Claude 面板示意圖，使用範例數字](docs/claude-preview.png)
