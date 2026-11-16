@@ -13,7 +13,6 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from claude_usage import ClaudeUsage, read_usage
-from monitor_status import Reachability
 from preferences import Preferences, Subscription, read_preferences
 from turzx import HEIGHT, WIDTH, Display
 from usage import CodexServer, UsageError, Window, find_codex, quota_windows
@@ -105,24 +104,40 @@ def allowance(window, accent):
     return remaining, color
 
 
-def chat_status(snapshot):
+def chat_status(snapshot, now):
     if snapshot.failed:
         return ("STALE" if snapshot.limits_at else "OFFLINE", AMBER)
-    return "LIVE", TEAL
+    if not snapshot.limits_at:
+        return "WAITING", MUTED
+    problem = quota_update_problem(snapshot.windows, now)
+    return (problem, AMBER) if problem else ("LIVE", TEAL)
 
 
 def claude_status(usage, now):
     if usage is None:
         return "WAITING", MUTED
-    if any(quota_expired(window, now) for window in usage.windows):
-        return "UPDATE DUE", AMBER
     age = now - usage.received_at
-    if usage.source == "web":
-        return ("STALE", AMBER) if age > timedelta(minutes=3) else ("LIVE", CLAUDE)
-    cached = age > timedelta(minutes=15)
-    if usage.source == "desktop":
-        return "SNAPSHOT", AMBER if cached else CLAUDE
-    return ("CACHED", AMBER) if cached else ("RECENT", CLAUDE)
+    stale_after = timedelta(minutes=3 if usage.source == "web" else 15)
+    if age > stale_after:
+        return ("STALE" if usage.source == "web" else "CACHED", AMBER)
+    problem = quota_update_problem(usage.windows, now)
+    if problem:
+        return problem, AMBER
+    return {"web": "LIVE", "desktop": "SNAPSHOT"}.get(usage.source, "RECENT"), CLAUDE
+
+
+def quota_update_problem(windows, now):
+    if not windows:
+        return "NO DATA"
+    if any(quota_expired(window, now) for window in windows):
+        return "UPDATE DUE"
+    if any(window.reset_at is None and not session_not_started(window) for window in windows):
+        return "RESET UNKNOWN"
+    return None
+
+
+def health_mark(status):
+    return ("O", TEAL) if status in {"LIVE", "SNAPSHOT", "RECENT"} else ("X", RED)
 
 
 def quota_expired(window, now):
@@ -141,13 +156,13 @@ def quota_card(draw, box, window, now, accent):
     label(draw, (left + 12, top + 11), f"{window_name(window.minutes)} LEFT", 13, MUTED, "bold")
     if quota_expired(window, now):
         label(draw, (left + 11, top + 33), "–", 46, MUTED, "bold")
-        label(draw, (left + 12, top + 80), "Awaiting update", 16, MUTED)
+        label(draw, (left + 12, top + 85), "Awaiting update", 16, MUTED)
         return
 
     remaining, color = allowance(window, accent)
     label(draw, (left + 11, top + 31), f"{remaining}%", 46, color, "bold")
     reset = "On first use" if session_not_started(window) else reset_label(window.reset_at, now)
-    label(draw, (left + 12, top + 80), reset, 16, TEXT)
+    label(draw, (left + 12, top + 85), reset, 16, TEXT)
 
 
 def subscription_label(subscription, now):
@@ -164,6 +179,9 @@ def subscription_label(subscription, now):
 def provider_section(draw, top, title, accent, status, stamp, subscription, windows, now,
                      *, empty, stacked=False):
     label(draw, (16, top), title, 31, accent, "bold")
+    mark, mark_color = health_mark(status[0])
+    mark_x = 16 + round(font(31, "bold").getlength(title)) + 11
+    label(draw, (mark_x, top + 4), mark, 25, mark_color, "bold")
     subscription_text, date_color = subscription_label(subscription, now)
     label(draw, (16, top + 43), subscription_text, 15, date_color, "bold")
     day = subscription.date if subscription else "—"
@@ -178,7 +196,7 @@ def provider_section(draw, top, title, accent, status, stamp, subscription, wind
 
     card_top = top + 99
     if not windows:
-        panel(draw, card_top, 104)
+        panel(draw, card_top, 111)
         label(draw, (27, card_top + 45), empty, 18)
         return
 
@@ -189,76 +207,31 @@ def provider_section(draw, top, title, accent, status, stamp, subscription, wind
     else:
         spans = ((14, 155, card_top), (165, 305, card_top))
     for window, (left, right, y) in zip(windows, spans):
-        quota_card(draw, (left, y, right, y + 103), window, now, accent)
+        quota_card(draw, (left, y, right, y + 110), window, now, accent)
 
 
-def status_messages(snapshot, claude, now, mode, unreachable):
-    messages = []
-    if mode != "claude" and snapshot.failed:
-        messages.append("ChatGPT sync unavailable")
-    if mode != "chatgpt":
-        status, _ = claude_status(claude, now)
-        if status == "WAITING":
-            messages.append("Claude usage not connected")
-        elif status in {"STALE", "CACHED"}:
-            messages.append("Claude sync delayed")
-        elif status == "UPDATE DUE":
-            messages.append("Claude quota reset · awaiting data")
-        elif claude.source == "desktop" and now - claude.received_at > timedelta(minutes=15):
-            messages.append("Claude snapshot needs refresh")
-        elif any(window.reset_at is None and not session_not_started(window) for window in claude.windows):
-            messages.append("Claude reset time unavailable")
-
-    providers = (
-        ("ChatGPT", snapshot.windows if mode != "claude" and not snapshot.failed else ()),
-        ("Claude", claude.windows if claude and mode != "chatgpt" else ()),
-    )
-    for name, windows in providers:
-        remaining = min((max(0, 100 - window.used) for window in windows or ()
-                         if not quota_expired(window, now)), default=100)
-        if remaining <= 10:
-            messages.append(f"{name} {remaining}% left")
-    messages.extend(f"{name} unreachable" for name in unreachable)
-    return messages
-
-
-def status_strip(draw, messages):
-    if not messages:
-        return
-    draw.rounded_rectangle((14, 450, 305, 473), radius=7, fill=PANEL, outline=BORDER)
-    draw.ellipse((23, 459, 28, 464), fill=AMBER)
-    for count in range(len(messages), 0, -1):
-        text = "  ·  ".join(messages[:count])
-        if count < len(messages):
-            text += f"  +{len(messages) - count}"
-        if font(13, "bold").getlength(text) <= 265:
-            label(draw, (35, 456), text, 13, AMBER, "bold")
-            break
-
-
-def render_dashboard(snapshot, claude, now, preferences, demo=False, *, unreachable=()):
+def render_dashboard(snapshot, claude, now, preferences, demo=False):
     mode = preferences.mode
     image = Image.new("RGB", (WIDTH, HEIGHT), BG)
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, WIDTH - 1, 3), fill=CLAUDE if mode == "claude" else TEAL)
     if mode == "combined":
         draw.rectangle((160, 0, WIDTH - 1, 3), fill=CLAUDE)
-        draw.line((15, 229, 305, 229), fill=BORDER)
+        draw.line((15, 240, 305, 240), fill=BORDER)
     if demo:
         label(draw, (304, 20), "DEMO", 13, MUTED, "bold", "rt")
 
     if mode != "claude":
         empty = "Quota unavailable" if snapshot.windows is None else "No quota window reported"
-        provider_section(draw, 18, "ChatGPT", TEAL, chat_status(snapshot), snapshot.limits_at,
+        provider_section(draw, 18, "ChatGPT", TEAL, chat_status(snapshot, now), snapshot.limits_at,
                          preferences.chatgpt_subscription, snapshot.windows, now,
                          empty=empty, stacked=mode == "chatgpt")
     if mode != "chatgpt":
-        top = 241 if mode == "combined" else 18
+        top = 257 if mode == "combined" else 18
         provider_section(draw, top, "Claude", CLAUDE, claude_status(claude, now),
                          claude.received_at if claude else None, preferences.claude_subscription,
                          claude.windows if claude else None, now, empty="Import Claude App usage",
                          stacked=mode == "claude")
-    status_strip(draw, status_messages(snapshot, claude, now, mode, unreachable))
     return image
 
 
@@ -274,8 +247,7 @@ def demo_image(path, mode):
     ), now)
     prefs = Preferences(mode=mode, chatgpt_subscription=Subscription("renews", "2026-12-16"),
                         claude_subscription=Subscription("ends", "2026-12-05"))
-    render_dashboard(snapshot, claude, now, prefs, demo=True,
-                     unreachable=("Pi",) if mode == "combined" else ()).save(path)
+    render_dashboard(snapshot, claude, now, prefs, demo=True).save(path)
 
 
 def main():
@@ -306,7 +278,6 @@ def main():
     server = CodexServer(executable)
     screen = Display(args.port)
     snapshot = Snapshot()
-    reachability = Reachability()
     last_poll = None
     last_claude_snapshot = None
     preferences = read_preferences()
@@ -342,8 +313,7 @@ def main():
 
             now = datetime.now().astimezone()
             claude = read_usage() if mode != "chatgpt" else None
-            reachability.refresh(preferences)
-            frame = render_dashboard(snapshot, claude, now, preferences, unreachable=reachability.unreachable)
+            frame = render_dashboard(snapshot, claude, now, preferences)
             try:
                 screen.show(frame, brightness=preferences.brightness)
             except OSError as error:

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from claude_usage import write_usage
 from preferences import (CHOICES, SUBSCRIPTION_EVENTS, SUBSCRIPTION_FIELDS, read_preferences,
-                         set_monitors, set_preference, set_subscription)
+                         set_preference, set_subscription)
 from usage import find_codex
 
 LABEL = "com.pcpcchen.35inchsmartscreen"
@@ -55,15 +55,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=(
         "install", "status", "uninstall", "menu-status", "set", "refresh", "import-claude",
-        "subscription", "monitors",
+        "subscription",
     ))
     parser.add_argument("--dashboard-root", type=Path, default=ROOT)
     parser.add_argument("--dashboard-python", default=sys.executable)
     parser.add_argument("--provider", choices=SUBSCRIPTION_FIELDS)
     parser.add_argument("--event", choices=(*SUBSCRIPTION_EVENTS, "clear"))
     parser.add_argument("--date")
-    parser.add_argument("--nous-port", type=int)
-    parser.add_argument("--pi-host")
     parser.add_argument("setting", nargs="?", choices=CHOICES)
     parser.add_argument("value", nargs="?")
     args = parser.parse_args()
@@ -76,12 +74,6 @@ def main():
             parser.error("set requires a setting and value")
         try:
             set_preference(args.setting, args.value)
-        except ValueError as error:
-            parser.error(str(error))
-        return 0
-    if args.action == "monitors":
-        try:
-            set_monitors(args.nous_port, args.pi_host)
         except ValueError as error:
             parser.error(str(error))
         return 0
