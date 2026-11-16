@@ -71,31 +71,31 @@ def panel(draw, top, height):
 
 
 def window_name(minutes):
-    names = {300: "5-HOUR WINDOW", 1440: "DAILY WINDOW", 10080: "WEEKLY WINDOW",
-             43200: "MONTHLY WINDOW"}
+    names = {300: "5-HOUR", 1440: "DAILY", 10080: "WEEKLY",
+             43200: "MONTHLY"}
     if minutes in names:
         return names[minutes]
     if minutes is None:
-        return "USAGE WINDOW"
+        return "USAGE"
     if minutes % 1440 == 0:
-        return f"{minutes // 1440}-DAY WINDOW"
+        return f"{minutes // 1440}-DAY"
     if minutes % 60 == 0:
-        return f"{minutes // 60}-HOUR WINDOW"
-    return f"{minutes}-MIN WINDOW"
+        return f"{minutes // 60}-HOUR"
+    return f"{minutes}-MIN"
 
 
 def reset_label(reset_at, now):
     if reset_at is None:
-        return "Reset time unavailable"
+        return "Reset unknown"
     seconds = reset_at - int(now.timestamp())
     if seconds <= 0:
         return "Reset pending"
     minutes = (seconds + 59) // 60
     if minutes >= 1440:
-        return f"Resets in {minutes // 1440}d {minutes % 1440 // 60}h"
+        return f"Reset {minutes // 1440}d {minutes % 1440 // 60}h"
     if minutes >= 60:
-        return f"Resets in {minutes // 60}h {minutes % 60:02}m"
-    return f"Resets in {minutes}m"
+        return f"Reset {minutes // 60}h {minutes % 60:02}m"
+    return f"Reset {minutes}m"
 
 
 def allowance(window, accent):
@@ -130,24 +130,18 @@ def session_not_started(window):
 
 
 def quota_card(draw, box, window, now, accent):
-    left, top, right, _ = box
+    left, top = box[:2]
     draw.rounded_rectangle(box, radius=13, fill=PANEL, outline=BORDER)
-    label(draw, (left + 12, top + 12), window_name(window.minutes), 13, MUTED, "bold")
+    label(draw, (left + 12, top + 11), f"{window_name(window.minutes)} LEFT", 13, MUTED, "bold")
     if quota_expired(window, now):
         label(draw, (left + 11, top + 33), "–", 46, MUTED, "bold")
-        label(draw, (left + 12, top + 103), "Awaiting update", 13, MUTED)
+        label(draw, (left + 12, top + 85), "Awaiting update", 16, MUTED)
         return
 
     remaining, color = allowance(window, accent)
     label(draw, (left + 11, top + 31), f"{remaining}%", 46, color, "bold")
-    track_left, track_right = left + 12, right - 12
-    draw.rounded_rectangle((track_left, top + 85, track_right, top + 90), radius=3, fill=BORDER)
-    if remaining:
-        filled = round((track_right - track_left) * remaining / 100)
-        draw.rounded_rectangle((track_left, top + 85, track_left + filled, top + 90),
-                               radius=3, fill=color)
-    reset = "Starts on first use" if session_not_started(window) else reset_label(window.reset_at, now)
-    label(draw, (left + 12, top + 103), reset, 13, TEXT)
+    reset = "On first use" if session_not_started(window) else reset_label(window.reset_at, now)
+    label(draw, (left + 12, top + 85), reset, 16, TEXT)
 
 
 def subscription_label(subscription, now):
@@ -155,28 +149,31 @@ def subscription_label(subscription, now):
         return "DATE NOT SET", MUTED
     past = subscription.date < now.date().isoformat()
     if subscription.event == "ends":
-        return f"ENDS {subscription.date}", AMBER
+        return "ENDS", AMBER
     if past:
-        return f"RENEWAL {subscription.date}", AMBER
-    return f"RENEWS {subscription.date}", MUTED
+        return "RENEWAL", AMBER
+    return "RENEWS", MUTED
 
 
 def provider_section(draw, top, title, accent, status, stamp, subscription, windows, now,
                      *, empty, stacked=False):
-    label(draw, (16, top), title, 27, accent, "bold")
+    label(draw, (16, top), title, 31, accent, "bold")
     subscription_text, date_color = subscription_label(subscription, now)
-    label(draw, (16, top + 34), subscription_text, 12, date_color, "bold")
+    label(draw, (16, top + 43), subscription_text, 15, date_color, "bold")
+    day = subscription.date if subscription else "—"
+    label(draw, (16, top + 64), day, 24, TEXT, "mono")
 
     text, color = status
-    label(draw, (304, top), text, 16, color, "bold", "rt")
-    if stamp is not None:
-        time_format = "%H:%M:%S" if stamp.date() == now.date() else "%m/%d %H:%M"
-        label(draw, (304, top + 22), stamp.strftime(time_format), 24, TEXT, "mono", "rt")
+    if stamp is not None and stamp.date() != now.date():
+        text += stamp.strftime(" · %m/%d")
+    label(draw, (304, top + 43), text, 16, color, "bold", "rt")
+    time_text = stamp.strftime("%H:%M:%S") if stamp else "—"
+    label(draw, (304, top + 64), time_text, 24, TEXT, "mono", "rt")
 
-    card_top = top + 58
+    card_top = top + 99
     if not windows:
-        panel(draw, card_top, 125)
-        label(draw, (27, card_top + 48), empty, 18)
+        panel(draw, card_top, 111)
+        label(draw, (27, card_top + 45), empty, 18)
         return
 
     if stacked:
@@ -186,7 +183,7 @@ def provider_section(draw, top, title, accent, status, stamp, subscription, wind
     else:
         spans = ((14, 155, card_top), (165, 305, card_top))
     for window, (left, right, y) in zip(windows, spans):
-        quota_card(draw, (left, y, right, y + 124), window, now, accent)
+        quota_card(draw, (left, y, right, y + 110), window, now, accent)
 
 
 def render_dashboard(snapshot, claude, now, preferences, demo=False):
@@ -196,17 +193,17 @@ def render_dashboard(snapshot, claude, now, preferences, demo=False):
     draw.rectangle((0, 0, WIDTH - 1, 3), fill=CLAUDE if mode == "claude" else TEAL)
     if mode == "combined":
         draw.rectangle((160, 0, WIDTH - 1, 3), fill=CLAUDE)
-    label(draw, (15, 19), "AI Usage", 32, TEXT, "bold")
-    label(draw, (304, 26), "DEMO · REMAINING" if demo else "REMAINING", 13, MUTED, "bold", "rt")
-    draw.line((15, 61, 305, 61), fill=BORDER)
+        draw.line((15, 240, 305, 240), fill=BORDER)
+    if demo:
+        label(draw, (304, 20), "DEMO", 13, MUTED, "bold", "rt")
 
     if mode != "claude":
         empty = "Quota unavailable" if snapshot.windows is None else "No quota window reported"
-        provider_section(draw, 78, "ChatGPT", TEAL, chat_status(snapshot), snapshot.limits_at,
+        provider_section(draw, 18, "ChatGPT", TEAL, chat_status(snapshot), snapshot.limits_at,
                          preferences.chatgpt_subscription, snapshot.windows, now,
                          empty=empty, stacked=mode == "chatgpt")
     if mode != "chatgpt":
-        top = 274 if mode == "combined" else 78
+        top = 257 if mode == "combined" else 18
         provider_section(draw, top, "Claude", CLAUDE, claude_status(claude, now),
                          claude.received_at if claude else None, preferences.claude_subscription,
                          claude.windows if claude else None, now, empty="Import Claude App usage",
