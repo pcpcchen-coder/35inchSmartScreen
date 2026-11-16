@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "SmartScreen Claude 用量同步",
+  "version": "1.0.0",
+  "description": "將目前 Claude 用量頁的額度同步至本機 SmartScreen。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArgymBhCw+a5rdKM+6dUHdykttycbCgaWBJEenA5HwunwiUFo0j7B+huRfemmHNmvdiiPvMsdBLbJD2xE8IGE0AANYQlv29TYP/crfjbaeYDqNWhlaIpGOWL69H7FdClIRSNK5SGy0eFAfhWIyVqHmSkxMySfV7PO4A9MEaxNE8EBcy9AN8ZjXZwJtiNx0CklSBQZfJ51E1RNjT7cha04mwoBprpDSUhLyVFB+BAmlzZKJzYBwrHJj+mfpYIQq6oK4qwcZeXXsKaNGZvNj/kFW2nsQbhGPXevZfep0mGR53i9zw/KySxLLRP8JABEA+GbL21mAtpRO1t5LRNX5nLOAQIDAQAB",
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "nativeMessaging",
+    "scripting",
+    "storage"
+  ],
+  "action": {
+    "default_title": "SmartScreen · 在 Claude 用量頁點一下開始同步"
+  },
+  "background": {
+    "service_worker": "worker.mjs",
+    "type": "module"
+  }
+}

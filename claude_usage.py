@@ -1,4 +1,4 @@
-"""Store Claude Code and Claude Desktop quota snapshots locally."""
+"""Store Claude quota snapshots locally."""
 
 import json
 import sys
@@ -41,11 +41,11 @@ def parse_limits(payload, *, allow_missing_reset=False):
 
 
 def write_usage(payload, path=CACHE, *, source="statusline"):
-    limits = parse_limits(payload, allow_missing_reset=source == "desktop")
+    limits = parse_limits(payload, allow_missing_reset=source != "statusline")
     if not limits:
         return {}
     snapshot = {"received_at": time.time(), "rate_limits": limits}
-    if source == "desktop":
+    if source in {"desktop", "web"}:
         snapshot["source"] = source
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
@@ -62,8 +62,9 @@ def write_usage(payload, path=CACHE, *, source="statusline"):
 def read_usage(path=CACHE):
     try:
         payload = json.loads(path.read_text())
-        source = "desktop" if isinstance(payload, dict) and payload.get("source") == "desktop" else "statusline"
-        limits = parse_limits(payload, allow_missing_reset=source == "desktop")
+        stored_source = payload.get("source") if isinstance(payload, dict) else None
+        source = stored_source if stored_source in ("desktop", "web") else "statusline"
+        limits = parse_limits(payload, allow_missing_reset=source != "statusline")
         if not limits:
             return None
         received_at = datetime.fromtimestamp(payload["received_at"]).astimezone()

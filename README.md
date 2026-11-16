@@ -67,7 +67,7 @@ tail -n 30 ~/Library/Logs/35inchSmartScreen/dashboard.log
 安裝後點選右上角的 **SmartScreen 小螢幕圖示**。工具會在登入時開啟，即使面板目前停止，仍可從圖示重新啟動。
 
 - **啟動面板**會立刻開始並設定登入自動啟動。**停止面板**會結束更新並取消面板的登入自動啟動。
-- **立即同步 ChatGPT**會要求背景服務重新查詢。Claude 資料仍由 Claude Code 狀態列提供。
+- **立即同步 ChatGPT**會要求背景服務重新查詢。Claude 可使用 Chrome 同步、桌面快照或 Claude Code 狀態列。
 - **訂閱日期**可分別設定 ChatGPT 或 Claude 的自動續訂與到期日期，或清除日期。日期保存在本機，帳單變更後可在同一處更新。
 - **顯示內容**可選同頁顯示、只顯示 ChatGPT 或只顯示 Claude。尚未接到用量時，對應區塊會顯示等待畫面。
 - **同步間隔與螢幕亮度**可直接調整。勾選 **停止面板時熄屏** 可在正常停止時關閉小螢幕。
@@ -80,6 +80,16 @@ tail -n 30 ~/Library/Logs/35inchSmartScreen/dashboard.log
 ![Claude 面板示意圖，使用範例數字](docs/claude-preview.png)
 
 Claude 區塊顯示 5 小時與每週額度。匯入或接收到新資料後，會直接更新同一畫面。
+
+### 用 Chrome 每分鐘自動同步
+
+開啟 [Claude 用量頁](https://claude.ai/settings/usage)，沿用 Chrome 中的登入。選用的 SmartScreen 擴充功能會每分鐘重新整理指定的頁籤，把頁面上顯示的訂閱用量百分比和重設時間送到本機。Chrome 關閉、頁籤關閉或離開用量頁後，須重新啟用。最近同步資料顯示 **LIVE**，超過 3 分鐘未收到資料顯示 **STALE**。
+
+1. 在專案目錄執行 `.venv/bin/python install_claude_bridge.py install`，註冊只接受本擴充功能的本機橋接程式。
+2. 在 Chrome 的 `chrome://extensions` 啟用開發人員模式，選「載入未封裝項目」，並選取專案裡的 `chrome-claude` 資料夾。
+3. 在登入後的 Claude 用量頁點擴充功能圖示。出現 **ON** 就已同步，點同一圖示可停止。請保留該用量頁籤，並避開裝置休眠。
+
+橋接程式只保存額度和重設時間，不存 Cookie 或 API 金鑰。若顯示 **!**，請確認本機橋接已註冊、瀏覽器已登入。解除安裝時，在 Chrome 移除擴充功能，並執行 `.venv/bin/python install_claude_bridge.py uninstall`。
 
 ### 使用 Claude 桌面 App
 
@@ -100,7 +110,7 @@ Claude 區塊顯示 5 小時與每週額度。匯入或接收到新資料後，�
 2. 把產生的 `statusLine` 欄位合併到 `~/.claude/settings.json`。如果原本已有自訂狀態列，可在原本的腳本中把同一份 stdin JSON 也傳給產生的指令，並把這段指令的 stdout 導向 `/dev/null`，以保留原本的終端機輸出。
 3. 開啟 Claude Code，等平常使用時收到第一個助理回覆。不必重啟小螢幕服務。
 
-Claude 區塊會顯示最後收到資料的時間。Claude Code 狀態列資料超過 15 分鐘會標示 **CACHED**。額度週期已到期時會顯示 **UPDATE DUE**，等新的回覆提供額度。只使用 Claude 網頁或桌面聊天時，面板要等下次 Claude Code 回覆才會更新。
+Claude 區塊會顯示最後收到資料的時間。Claude Code 狀態列資料超過 15 分鐘會標示 **CACHED**。額度週期已到期時會顯示 **UPDATE DUE**，等新的回覆提供額度。這條管道會在 Claude Code 下次回覆時更新。
 
 介接腳本只把時間、用量百分比和重設時間寫到本機的 `~/Library/Caches/35inchSmartScreen/claude-usage.json`。移除狀態列設定並刪除該檔案，即可清除小螢幕上已快取的 Claude 用量。
 

@@ -115,7 +115,10 @@ def claude_status(usage, now):
         return "WAITING", MUTED
     if any(quota_expired(window, now) for window in usage.windows):
         return "UPDATE DUE", AMBER
-    cached = now - usage.received_at > timedelta(minutes=15)
+    age = now - usage.received_at
+    if usage.source == "web":
+        return ("STALE", AMBER) if age > timedelta(minutes=3) else ("LIVE", CLAUDE)
+    cached = age > timedelta(minutes=15)
     if usage.source == "desktop":
         return "SNAPSHOT", AMBER if cached else CLAUDE
     return ("CACHED", AMBER) if cached else ("RECENT", CLAUDE)
