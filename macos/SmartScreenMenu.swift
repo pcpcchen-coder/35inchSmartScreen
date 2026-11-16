@@ -15,7 +15,7 @@ private struct Service {
     let dashboardRoot: String
     let dashboardPython: String
 
-    func run(_ arguments: [String]) throws -> Data {
+    func run(_ arguments: [String], input: Data? = nil) throws -> Data {
         let process = Process()
         process.executableURL = python
         process.arguments = [
@@ -26,7 +26,13 @@ private struct Service {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
+        let inputPipe = input.map { _ in Pipe() }
+        process.standardInput = inputPipe
         try process.run()
+        if let input, let inputPipe {
+            try inputPipe.fileHandleForWriting.write(contentsOf: input)
+            try inputPipe.fileHandleForWriting.close()
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         if process.terminationStatus != 0 {
@@ -116,6 +122,7 @@ private final class MenuController: NSObject, NSApplicationDelegate, NSMenuDeleg
         let refresh = command("立即同步 ChatGPT", ["refresh"])
         refresh.isEnabled = state.enabled && state.mode != "claude"
         menu.addItem(refresh)
+        menu.addItem(item("匯入 Claude App 用量…", action: #selector(importClaude)))
         menu.addItem(.separator())
 
         menu.addItem(choices("顯示內容", key: "mode", selected: state.mode, options: [
@@ -176,10 +183,14 @@ private final class MenuController: NSObject, NSApplicationDelegate, NSMenuDeleg
 
     @objc private func runCommand(_ sender: NSMenuItem) {
         guard !busy, let arguments = sender.representedObject as? [String] else { return }
+        perform(arguments)
+    }
+
+    private func perform(_ arguments: [String], input: Data? = nil) {
         busy = true
         let service = service
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = Result { try service.run(arguments) }
+            let result = Result { try service.run(arguments, input: input) }
             DispatchQueue.main.async {
                 self.busy = false
                 self.refreshState()
@@ -188,6 +199,83 @@ private final class MenuController: NSObject, NSApplicationDelegate, NSMenuDeleg
                 }
             }
         }
+    }
+
+
+    @objc private func importClaude() {
+        let alert = NSAlert()
+        alert.messageText = "匯入 Claude App 用量"
+        alert.informativeText = "從 Claude App 的「設定 → 使用量」填入已使用百分比。重設時間可留白，填寫時請用 Mac 的本地時間。"
+        alert.addButton(withTitle: "匯入")
+        alert.addButton(withTitle: "取消")
+
+        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 340, height: 170))
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+
+        let fields: [NSTextField] = [
+            importField("目前工作階段已用（%）", "0–100", into: stack),
+            importField("目前工作階段重設時間", "YYYY-MM-DD HH:mm（選填）", into: stack),
+            importField("本週已用（%）", "0–100", into: stack),
+            importField("本週重設時間", "YYYY-MM-DD HH:mm（選填）", into: stack),
+        ]
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = fields[0]
+        NSApp.activate(ignoringOtherApps: true)
+
+        while alert.runModal() == .alertFirstButtonReturn {
+            do {
+                let payload = try makeClaudePayload(fields)
+                perform(["import-claude"], input: payload)
+                return
+            } catch {
+                showError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func importField(_ name: String, _ placeholder: String, into stack: NSStackView) -> NSTextField {
+        let label = NSTextField(labelWithString: name)
+        let field = NSTextField(string: "")
+        field.placeholderString = placeholder
+        field.setAccessibilityLabel(name)
+        field.widthAnchor.constraint(equalToConstant: 340).isActive = true
+        stack.addArrangedSubview(label)
+        stack.addArrangedSubview(field)
+        return field
+    }
+
+    private func makeClaudePayload(_ fields: [NSTextField]) throws -> Data {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        formatter.isLenient = false
+        var limits: [String: [String: Any]] = [:]
+        for (name, index) in [("five_hour", 0), ("seven_day", 2)] {
+            let used = fields[index].stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let reset = fields[index + 1].stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if used.isEmpty && reset.isEmpty { continue }
+            guard let percent = Double(used), (0...100).contains(percent) else {
+                throw importError("請填入介於 0 到 100 的已使用百分比。")
+            }
+            var window: [String: Any] = ["used_percentage": percent]
+            if !reset.isEmpty {
+                guard let date = formatter.date(from: reset), formatter.string(from: date) == reset else {
+                    throw importError("重設時間請使用 YYYY-MM-DD HH:mm，或留白。")
+                }
+                window["resets_at"] = Int(date.timeIntervalSince1970)
+            }
+            limits[name] = window
+        }
+        guard !limits.isEmpty else {
+            throw importError("請至少填入一項已使用百分比。")
+        }
+        return try JSONSerialization.data(withJSONObject: ["rate_limits": limits])
+    }
+
+    private func importError(_ message: String) -> NSError {
+        NSError(domain: "SmartScreen", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     @objc private func openLog() {

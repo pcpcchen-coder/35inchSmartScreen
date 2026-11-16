@@ -105,14 +105,14 @@ def reset_label(reset_at, now):
     return f"Resets in {minutes}m"
 
 
-def quota_card(draw, top, window, now, base_color):
+def quota_card(draw, top, window, now, base_color, *, reset_text=None):
     panel(draw, top, 102)
     remaining = max(0, min(100, 100 - window.used))
     color = RED if remaining <= 10 else AMBER if remaining <= 25 else base_color
     label(draw, (27, top + 12), window_name(window.minutes), 13, MUTED, "bold")
     label(draw, (26, top + 28), f"{remaining}%", 43, color, "bold")
     label(draw, (292, top + 37), "LEFT", 13, color, "bold", "rt")
-    label(draw, (292, top + 56), reset_label(window.reset_at, now), 14, TEXT, anchor="rt")
+    label(draw, (292, top + 56), reset_text or reset_label(window.reset_at, now), 14, TEXT, anchor="rt")
     draw.rounded_rectangle((27, top + 80, 292, top + 88), radius=4, fill=BORDER)
     if remaining:
         draw.rounded_rectangle((27, top + 80, 27 + round(265 * remaining / 100), top + 88),
@@ -202,9 +202,10 @@ def render_claude(usage, now, demo=False):
     if usage is None:
         panel(draw, 96, 102)
         label(draw, (27, 119), "Waiting for usage data", 21, TEXT, "bold")
-        label(draw, (27, 156), "Claude Code status line", 16, MUTED)
+        label(draw, (27, 156), "Import or connect Claude Code", 15, MUTED)
         return image
-    expired = any(window.reset_at <= now.timestamp() for window in usage.windows)
+    expired = any(window.reset_at is not None and window.reset_at <= now.timestamp()
+                  for window in usage.windows)
     if demo:
         badge(draw, "DEMO", SKY)
     elif expired:
@@ -212,18 +213,24 @@ def render_claude(usage, now, demo=False):
     elif now - usage.received_at > timedelta(minutes=15):
         badge(draw, "CACHED", AMBER)
     else:
-        badge(draw, "RECENT", CLAUDE)
+        badge(draw, "SNAPSHOT" if usage.source == "desktop" else "RECENT", CLAUDE)
     for index, window in enumerate(usage.windows):
         top = 96 + index * 110
-        if window.reset_at > now.timestamp():
-            quota_card(draw, top, window, now, CLAUDE)
+        if window.reset_at is None or window.reset_at > now.timestamp():
+            reset_text = None
+            if window.reset_at is None and window.minutes == 300 and window.used == 0:
+                reset_text = "Starts with first message"
+            quota_card(draw, top, window, now, CLAUDE, reset_text=reset_text)
         else:
             panel(draw, top, 102)
             label(draw, (27, top + 12), window_name(window.minutes), 13, MUTED, "bold")
             label(draw, (27, top + 42), "Awaiting new limit data", 20, TEXT, "bold")
 
-    label(draw, (16, 332), "UPDATES AFTER CLAUDE CODE REPLIES", 12, MUTED, "bold")
-    label(draw, (16, 450), "LAST RECEIVED", 12, MUTED, "bold")
+    source_text = ("IMPORTED FROM CLAUDE DESKTOP" if usage.source == "desktop"
+                   else "UPDATES AFTER CLAUDE CODE REPLIES")
+    label(draw, (16, 332), source_text, 12, MUTED, "bold")
+    label(draw, (16, 450), "LAST IMPORTED" if usage.source == "desktop" else "LAST RECEIVED",
+          12, MUTED, "bold")
     label(draw, (304, 448), usage.received_at.strftime("%m/%d %H:%M"), 16, TEXT, "mono", "rt")
     return image
 
@@ -276,6 +283,7 @@ def main():
     snapshot = Snapshot()
     started = time.monotonic()
     last_poll = None
+    last_claude_snapshot = None
     preferences = read_preferences()
     usb_offline = None
     stopping = False
@@ -323,6 +331,9 @@ def main():
                 if usb_offline is not False:
                     logging.info("Dashboard frame sent to USB display")
                 usb_offline = False
+                if claude and claude.received_at != last_claude_snapshot:
+                    logging.info("Claude usage displayed (%s)", claude.source)
+                    last_claude_snapshot = claude.received_at
             if args.once:
                 return int(usb_offline or bool(snapshot.errors))
             if not stopping:

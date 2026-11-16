@@ -10,6 +10,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from claude_usage import write_usage
 from preferences import CHOICES, read_preferences, set_preference
 from usage import find_codex
 
@@ -52,7 +53,7 @@ def unload():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=(
-        "install", "status", "uninstall", "menu-status", "set", "refresh",
+        "install", "status", "uninstall", "menu-status", "set", "refresh", "import-claude",
     ))
     parser.add_argument("--dashboard-root", type=Path, default=ROOT)
     parser.add_argument("--dashboard-python", default=sys.executable)
@@ -71,6 +72,13 @@ def main():
         except ValueError as error:
             parser.error(str(error))
         return 0
+    if args.action == "import-claude":
+        try:
+            if write_usage(json.load(sys.stdin), source="desktop"):
+                return 0
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+        parser.error("No valid Claude usage fields were supplied")
     if args.action == "refresh":
         return launchctl("kill", "SIGUSR1", TARGET, check=False).returncode
 

@@ -77,7 +77,17 @@ tail -n 30 ~/Library/Logs/35inchSmartScreen/dashboard.log
 
 ![Claude 面板示意圖，使用範例數字](docs/claude-preview.png)
 
-Claude 頁面使用 Claude Code 官方狀態列回傳的 5 小時與每週額度。請先安裝 Claude Code，並用 Claude 訂閱帳號登入。收到第一筆額度後，小螢幕每 20 秒在 ChatGPT 和 Claude 頁面間切換。
+Claude 頁面顯示 5 小時與每週額度。使用輪播模式時，收到第一筆 Claude 資料後，預設每 20 秒切換頁面，間隔可在選單列調整。
+
+### 使用 Claude 桌面 App
+
+在 Claude App 打開 **設定 → 使用量**，再從 SmartScreen 選單列選 **匯入 Claude App 用量…**。填入畫面顯示的「已使用」百分比，重設時間可留白。若目前工作階段顯示「從您的第一則訊息開始」，填 0% 並留白重設時間即可。
+
+小螢幕會把這筆資料標為 **SNAPSHOT** 並顯示匯入時間。下次要更新時，再從 Claude App 匯入最新數字。
+
+### 隨 Claude Code 回覆更新
+
+可使用 Claude Code 終端版的官方狀態列更新額度。請先安裝 Claude Code，並用 Claude 訂閱帳號登入。
 
 1. 終端機進入這個 repo，執行以下指令產生 `statusLine` 設定內容。
 

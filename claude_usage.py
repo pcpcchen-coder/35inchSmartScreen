@@ -1,4 +1,4 @@
-"""Bridge the Claude Code status line to the local dashboard."""
+"""Store Claude Code and Claude Desktop quota snapshots locally."""
 
 import json
 import sys
@@ -18,9 +18,10 @@ PERIODS = {"five_hour": 300, "seven_day": 10080}
 class ClaudeUsage:
     received_at: datetime
     windows: tuple[Window, ...]
+    source: str = "statusline"
 
 
-def parse_limits(payload):
+def parse_limits(payload, *, allow_missing_reset=False):
     limits = payload.get("rate_limits") if isinstance(payload, dict) else None
     if not isinstance(limits, dict):
         return {}
@@ -32,21 +33,25 @@ def parse_limits(payload):
         used, reset = window.get("used_percentage"), window.get("resets_at")
         if type(used) not in (int, float) or not 0 <= used <= 100:
             continue
-        if type(reset) is not int or reset <= 0:
-            continue
+        if not (reset is None and allow_missing_reset):
+            if type(reset) is not int or reset <= 0:
+                continue
         valid[name] = {"used_percentage": used, "resets_at": reset}
     return valid
 
 
-def write_usage(payload, path=CACHE):
-    limits = parse_limits(payload)
+def write_usage(payload, path=CACHE, *, source="statusline"):
+    limits = parse_limits(payload, allow_missing_reset=source == "desktop")
     if not limits:
         return {}
+    snapshot = {"received_at": time.time(), "rate_limits": limits}
+    if source == "desktop":
+        snapshot["source"] = source
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
         temporary = Path(stream.name)
         try:
-            json.dump({"received_at": time.time(), "rate_limits": limits}, stream)
+            json.dump(snapshot, stream)
             stream.close()
             temporary.replace(path)
         finally:
@@ -57,7 +62,8 @@ def write_usage(payload, path=CACHE):
 def read_usage(path=CACHE):
     try:
         payload = json.loads(path.read_text())
-        limits = parse_limits(payload)
+        source = "desktop" if isinstance(payload, dict) and payload.get("source") == "desktop" else "statusline"
+        limits = parse_limits(payload, allow_missing_reset=source == "desktop")
         if not limits:
             return None
         received_at = datetime.fromtimestamp(payload["received_at"]).astimezone()
@@ -65,7 +71,7 @@ def read_usage(path=CACHE):
             Window(round(window["used_percentage"]), PERIODS[name], window["resets_at"])
             for name, window in limits.items()
         )
-        return ClaudeUsage(received_at, windows)
+        return ClaudeUsage(received_at, windows, source)
     except (OSError, OverflowError, ValueError, KeyError, TypeError):
         return None
 

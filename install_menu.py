@@ -27,7 +27,7 @@ def build(bundle):
     executable.parent.mkdir(parents=True)
     resources = bundle / "Contents/Resources"
     resources.mkdir()
-    for name in ("service.py", "preferences.py", "usage.py"):
+    for name in ("service.py", "preferences.py", "usage.py", "claude_usage.py"):
         shutil.copy2(ROOT / name, resources / name)
     (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({
         "CFBundleIdentifier": LABEL,

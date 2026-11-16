@@ -43,3 +43,19 @@ class ClaudeUsageTests(unittest.TestCase):
             self.assertEqual(read_usage(path).windows, (Window(0, 10080, 1794976735),))
             path.write_text("not JSON")
             self.assertIsNone(read_usage(path))
+
+    def test_desktop_snapshot_accepts_an_inactive_session_without_a_reset(self):
+        payload = {"rate_limits": {
+            "five_hour": {"used_percentage": 0},
+            "seven_day": {"used_percentage": 24, "resets_at": 1794976735},
+        }}
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "claude-usage.json"
+            write_usage(payload, path, source="desktop")
+            snapshot = read_usage(path)
+            self.assertEqual(snapshot.source, "desktop")
+            self.assertEqual(snapshot.windows, (Window(0, 300, None), Window(24, 10080, 1794976735)))
+            write_usage(payload, path)
+            snapshot = read_usage(path)
+            self.assertEqual(snapshot.source, "statusline")
+            self.assertEqual(snapshot.windows, (Window(24, 10080, 1794976735),))
