@@ -26,3 +26,11 @@ class PreferencesTests(unittest.TestCase):
             self.assertEqual(read_preferences(path), Preferences())
             path.write_text("corrupt JSON")
             self.assertEqual(read_preferences(path), Preferences())
+
+    def test_old_rotation_settings_use_combined_view_and_keep_other_preferences(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "preferences.json"
+            path.write_text('{"mode": "rotate", "page_seconds": 10, "poll_seconds": 15, "brightness": 60}')
+            self.assertEqual(read_preferences(path), Preferences(
+                mode="combined", poll_seconds=15, brightness=60,
+            ))

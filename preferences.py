@@ -7,9 +7,8 @@ from tempfile import NamedTemporaryFile
 
 PREFERENCES = Path.home() / "Library/Application Support/35inchSmartScreen/preferences.json"
 CHOICES = {
-    "mode": ("rotate", "chatgpt", "claude"),
+    "mode": ("combined", "chatgpt", "claude"),
     "poll_seconds": (15, 30, 60, 120),
-    "page_seconds": (10, 20, 30, 60),
     "brightness": (20, 40, 60, 80, 100),
     "blank_on_stop": (False, True),
 }
@@ -17,9 +16,8 @@ CHOICES = {
 
 @dataclass(frozen=True)
 class Preferences:
-    mode: str = "rotate"
+    mode: str = "combined"
     poll_seconds: int = 30
-    page_seconds: int = 20
     brightness: int | None = None
     blank_on_stop: bool = False
 

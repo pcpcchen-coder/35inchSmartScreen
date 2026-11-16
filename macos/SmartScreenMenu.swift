@@ -4,7 +4,6 @@ private struct MenuState: Decodable, Equatable {
     let enabled: Bool
     let mode: String
     let poll_seconds: Int
-    let page_seconds: Int
     let brightness: Int?
     let blank_on_stop: Bool
 }
@@ -126,7 +125,7 @@ private final class MenuController: NSObject, NSApplicationDelegate, NSMenuDeleg
         menu.addItem(.separator())
 
         menu.addItem(choices("顯示內容", key: "mode", selected: state.mode, options: [
-            ("ChatGPT 與 Claude 輪播", "rotate"),
+            ("同頁顯示 ChatGPT 與 Claude", "combined"),
             ("只顯示 ChatGPT", "chatgpt"),
             ("只顯示 Claude", "claude"),
         ]))
@@ -134,11 +133,6 @@ private final class MenuController: NSObject, NSApplicationDelegate, NSMenuDeleg
                               options: seconds([15, 30, 60, 120]))
         polling.isEnabled = state.mode != "claude"
         menu.addItem(polling)
-
-        let rotation = choices("頁面輪播間隔", key: "page_seconds", selected: String(state.page_seconds),
-                               options: seconds([10, 20, 30, 60]))
-        rotation.isEnabled = state.mode == "rotate"
-        menu.addItem(rotation)
 
         let brightness = choices(state.brightness == nil ? "螢幕亮度（裝置預設）" : "螢幕亮度",
                                  key: "brightness", selected: state.brightness.map(String.init),

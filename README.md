@@ -2,9 +2,11 @@
 
 用 Mac 把 ChatGPT 的 Work／Codex 用量送到 TURZX 3.5 吋 USB 小螢幕，也能接上 Claude Code 額度。畫面使用直向 320 × 480 解析度。
 
-![示意圖，使用範例數字](docs/preview.png)
+![ChatGPT 與 Claude 同頁示意圖，使用範例數字](docs/combined-preview.png)
 
 ## 畫面顯示
+
+預設在同一畫面顯示 ChatGPT 和 Claude。兩家的區塊各自顯示資料時間，底部保留 ChatGPT 的近七天 token 用量。
 
 - **剩餘額度**依帳號實際回傳的週期顯示，例如 5 小時與每週剩餘百分比，以及距離重設的時間。
 - **最近 7 天 token 用量**顯示每日長條與總計。圖表按 UTC 日期排列，包含今天。
@@ -40,7 +42,7 @@
 只想預覽版面時，用以下指令產生範例 PNG。這個模式不會查詢帳號或使用 USB。
 
 ```sh
-.venv/bin/python dashboard.py --preview preview.png
+.venv/bin/python dashboard.py --preview-combined preview.png
 ```
 
 ## 登入後自動啟動
@@ -67,8 +69,8 @@ tail -n 30 ~/Library/Logs/35inchSmartScreen/dashboard.log
 
 - **啟動面板**會立刻開始並設定登入自動啟動。**停止面板**會結束更新並取消面板的登入自動啟動。
 - **立即同步 ChatGPT**會要求背景服務重新查詢。Claude 資料仍由 Claude Code 狀態列提供。
-- **顯示內容**可選 ChatGPT、Claude 或兩者輪播。只選 Claude 時，尚未接到資料會顯示等待畫面。
-- **同步間隔、輪播間隔與螢幕亮度**可直接調整。勾選 **停止面板時熄屏** 可在正常停止時關閉小螢幕。
+- **顯示內容**可選同頁顯示、只顯示 ChatGPT 或只顯示 Claude。尚未接到用量時，對應區塊會顯示等待畫面。
+- **同步間隔與螢幕亮度**可直接調整。勾選 **停止面板時熄屏** 可在正常停止時關閉小螢幕。
 - **結束選單列工具**可暫時收起圖示。要再開啟，可從 Finder 開啟 `~/Applications/SmartScreen.app`。
 
 要解除選單列工具的安裝，執行 `.venv/bin/python install_menu.py uninstall`。面板本身請用 `service.py` 管理。
@@ -77,7 +79,7 @@ tail -n 30 ~/Library/Logs/35inchSmartScreen/dashboard.log
 
 ![Claude 面板示意圖，使用範例數字](docs/claude-preview.png)
 
-Claude 頁面顯示 5 小時與每週額度。使用輪播模式時，收到第一筆 Claude 資料後，預設每 20 秒切換頁面，間隔可在選單列調整。
+Claude 區塊顯示 5 小時與每週額度。匯入或接收到新資料後，會直接更新同一畫面。
 
 ### 使用 Claude 桌面 App
 
@@ -98,9 +100,9 @@ Claude 頁面顯示 5 小時與每週額度。使用輪播模式時，收到第�
 2. 把產生的 `statusLine` 欄位合併到 `~/.claude/settings.json`。如果原本已有自訂狀態列，可在原本的腳本中把同一份 stdin JSON 也傳給產生的指令，並把這段指令的 stdout 導向 `/dev/null`，以保留原本的終端機輸出。
 3. 開啟 Claude Code，等平常使用時收到第一個助理回覆。不必重啟小螢幕服務。
 
-Claude 頁面會顯示最後收到資料的時間。超過 15 分鐘沒收到資料會標示 **CACHED**。額度週期已到期時會顯示 **UPDATE DUE**，等新的回覆提供額度。只使用 Claude 網頁或桌面聊天時，面板要等下次 Claude Code 回覆才會更新。
+Claude 區塊會顯示最後收到資料的時間。超過 15 分鐘沒收到資料會標示 **CACHED**。額度週期已到期時會顯示 **UPDATE DUE**，等新的回覆提供額度。只使用 Claude 網頁或桌面聊天時，面板要等下次 Claude Code 回覆才會更新。
 
-介接腳本只把時間、用量百分比和重設時間寫到本機的 `~/Library/Caches/35inchSmartScreen/claude-usage.json`。移除狀態列設定並刪除該檔案，即可取消 Claude 輪播。
+介接腳本只把時間、用量百分比和重設時間寫到本機的 `~/Library/Caches/35inchSmartScreen/claude-usage.json`。移除狀態列設定並刪除該檔案，即可清除小螢幕上已快取的 Claude 用量。
 
 ```sh
 .venv/bin/python dashboard.py --preview-claude claude-preview.png
@@ -108,7 +110,7 @@ Claude 頁面會顯示最後收到資料的時間。超過 15 分鐘沒收到資
 
 ## 小螢幕更新方式
 
-TURZX 透過 USB 接收點陣圖，macOS 會把它辨識為 USB 裝置。面板平常只傳送有變化的小區塊，例如剩餘額度、倒數或最後同步時間。切換 ChatGPT 和 Claude 頁面時，變動範圍較大，仍可能看見重繪。第一次開啟或重新連線時會送完整畫面。
+TURZX 透過 USB 接收點陣圖，macOS 會把它辨識為 USB 裝置。面板平常只傳送有變化的小區塊，例如剩餘額度、倒數或最後同步時間。從選單列變更顯示內容時，較大的變動仍可能看見重繪。第一次開啟或重新連線時會送完整畫面。
 
 ## 畫面出現橫線或亂碼
 
