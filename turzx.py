@@ -1,22 +1,41 @@
-"""RGB565 output for the TURZX 3.5-inch USB serial display."""
+"""Send RGB565 images to the TURZX 3.5-inch USB bulk endpoint."""
 
+import errno
 import struct
-from pathlib import Path
 
+import usb.core
+import usb.util
 from PIL import ImageChops
-from serial import Serial
 from serial.tools.list_ports import comports
 
 WIDTH, HEIGHT = 320, 480
 USB_ID = (0x1A86, 0x5722)
+SERIAL_NUMBERS = {"USB35INCHIPS", "USB35INCHIPSV2"}
+DATA_INTERFACE = 1
+BULK_OUT = 0x03
+CHUNK_BYTES = 4096  # Multiple of the endpoint's 64-byte USB packet size.
 
 
-def find_port():
-    matches = [
-        port.device for port in comports()
-        if (port.vid, port.pid) == USB_ID and port.serial_number in
-        {"USB35INCHIPS", "USB35INCHIPSV2"}
-    ]
+def find_device(port):
+    route = None
+    if port:
+        for candidate in comports():
+            if candidate.device == port and candidate.location:
+                bus, ports = candidate.location.split("-", 1)
+                route = (int(bus), tuple(map(int, ports.split("."))))
+                break
+        if route is None:
+            raise OSError(f"Cannot resolve the USB location of {port}")
+
+    try:
+        devices = usb.core.find(find_all=True, idVendor=USB_ID[0], idProduct=USB_ID[1])
+        matches = [
+            device for device in devices
+            if (route is None or (device.bus, device.port_numbers) == route)
+            and device.serial_number in SERIAL_NUMBERS
+        ]
+    except usb.core.NoBackendError as error:
+        raise OSError("libusb is required. Install it with brew install libusb.") from error
     if len(matches) != 1:
         raise OSError("Connect one TURZX 3.5-inch display or specify --port")
     return matches[0]
@@ -30,31 +49,50 @@ def command(opcode, x=0, y=0, right=0, bottom=0):
 class Display:
     def __init__(self, port):
         self.port = port
-        self.serial = None
+        self.device = None
         self.previous = None
 
     def close(self):
-        if self.serial is not None:
-            self.serial.close()
-            self.serial = None
+        if self.device is not None:
+            try:
+                usb.util.dispose_resources(self.device)
+            except usb.core.USBError:
+                pass  # The panel may already have been unplugged.
+            finally:
+                self.device = None
         self.previous = None
 
+    def connect(self):
+        self.device = find_device(self.port)
+        try:
+            usb.util.claim_interface(self.device, DATA_INTERFACE)
+        except usb.core.USBError as error:
+            if error.errno != errno.EACCES or not self.device.is_kernel_driver_active(DATA_INTERFACE):
+                raise
+            # On macOS the CDC driver may initially own this interface.
+            self.device.set_configuration()
+            usb.util.claim_interface(self.device, DATA_INTERFACE)
+
+        # Finish any interrupted bitmap before sending setup commands. When the
+        # panel is idle, the same header and zero pixels draw a black frame.
+        self.bitmap((0, 0, WIDTH, HEIGHT), bytes(WIDTH * HEIGHT * 2))
+        self.send(command(109))
+        self.send(command(121) + struct.pack(">BHH", 100, WIDTH, HEIGHT))
+
     def send(self, data):
-        self.serial.write(data)
-        # Let macOS finish each transfer before queuing the next chunk.
-        self.serial.flush()
+        # Commands must each start at a USB transfer boundary.
+        if self.device.write(BULK_OUT, data, timeout=3000) != len(data):
+            raise OSError("Incomplete USB transfer")
+
+    def bitmap(self, bounds, pixels):
+        left, top, right, bottom = bounds
+        self.send(command(197, left, top, right - 1, bottom - 1))
+        for offset in range(0, len(pixels), CHUNK_BYTES):
+            self.send(pixels[offset:offset + CHUNK_BYTES])
 
     def show(self, image):
-        if self.serial is not None and not Path(self.serial.port).exists():
-            self.close()
-        if self.serial is None:
-            self.serial = Serial(
-                self.port or find_port(), 115200, rtscts=True, write_timeout=3, exclusive=True,
-            )
-            self.send(command(109))
-            # Set portrait orientation and native dimensions.
-            orientation = struct.pack(">BHH", 100, WIDTH, HEIGHT) + bytes(5)
-            self.send(command(121) + orientation)
+        if self.device is None:
+            self.connect()
 
         bounds = (0, 0, WIDTH, HEIGHT)
         if self.previous is not None:
@@ -68,8 +106,5 @@ class Display:
             pixels[index * 2] = (green & 0x1C) << 3 | blue >> 3
             pixels[index * 2 + 1] = (red & 0xF8) | green >> 5
 
-        self.send(command(197, left, top, right - 1, bottom - 1))
-        chunk_size = WIDTH * 8
-        for offset in range(0, len(pixels), chunk_size):
-            self.send(pixels[offset:offset + chunk_size])
+        self.bitmap(bounds, pixels)
         self.previous = image

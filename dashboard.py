@@ -203,7 +203,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--interval", type=int, default=30, help="usage polling in seconds (default 30)")
     parser.add_argument("--codex", help="path to the Codex executable")
-    parser.add_argument("--port", help="USB serial path (default: autodetect)")
+    parser.add_argument("--port", help="USB device selector by serial path (default: autodetect)")
     parser.add_argument("--once", action="store_true", help="fetch and write one hardware frame")
     parser.add_argument("--preview", type=Path, help="save a demo PNG without accessing account or USB")
     parser.add_argument("--verbose", action="store_true")
@@ -241,7 +241,7 @@ def main():
                 screen.show(render(snapshot, datetime.now().astimezone()))
             except OSError as error:
                 if usb_offline is not True or args.once:
-                    logging.warning("USB display unavailable (%s)", type(error).__name__)
+                    logging.warning("USB display unavailable: %s", error)
                 screen.close()
                 usb_offline = True
             else:
