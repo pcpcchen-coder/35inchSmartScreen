@@ -22,6 +22,7 @@ class Window:
     used: int
     minutes: int | None
     reset_at: int | None
+    idle: bool | None = None
 
 
 class CodexServer:

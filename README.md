@@ -118,6 +118,18 @@ Claude 區塊會顯示最後收到資料的時間。Claude Code 狀態列資料�
 .venv/bin/python dashboard.py --preview-claude claude-preview.png
 ```
 
+## 底部狀態列
+
+狀態列在用量同步延遲、額度剩 10% 以下、Claude 重設時間不明或已設定的本機服務無法連線時顯示。平常會隱藏，兩家的用量仍固定在同一頁。
+
+可選擇監看 Nous Core 的本機 TCP 埠，以及樹莓派的 SSH 埠。每 30 秒檢查一次，連續兩次連不上才顯示提示。這項檢查只驗證連線，無須 SSH 帳密。
+
+```sh
+.venv/bin/python service.py monitors --nous-port 8787 --pi-host 192.168.0.20
+```
+
+請替換成自己的樹莓派 IP。省略某個參數可停用該監看項目，省略兩個則清除監看設定。
+
 ## 小螢幕更新方式
 
 TURZX 透過 USB 接收點陣圖，macOS 會把它辨識為 USB 裝置。面板平常只傳送有變化的小區塊，例如剩餘額度、倒數或最後同步時間。從選單列變更顯示內容時，較大的變動仍可能看見重繪。第一次開啟或重新連線時會送完整畫面。

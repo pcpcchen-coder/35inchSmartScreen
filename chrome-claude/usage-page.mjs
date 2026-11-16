@@ -28,16 +28,16 @@ export async function readUsagePage() {
             const used = Number(value);
             if (value === "" || !Number.isFinite(used) || used < 0 || used > 100) continue;
 
+            let reset = null;
             let row = meter.parentElement;
             for (let depth = 0; depth < 5 && row; depth++, row = row.parentElement) {
                 if (row.querySelectorAll('[role="meter"]').length !== 1) break;
-                const reset = row.innerText.split("\n").map(line => line.trim()).find(line =>
-                    /^(?:Resets?\b|(?:[星期週禮拜]+[日一二三四五六天]|今天|明天).*重[設置]|從您的第一則訊息開始)/i.test(line));
-                if (reset) {
-                    result[key] = {used, reset};
-                    break;
-                }
+                reset = row.innerText.split("\n").map(line => line.trim()).find(line =>
+                    /(?:^Resets?\b|重[設置]$|從您的第一則訊息開始|Starts? with your first message)/i.test(line)
+                ) ?? null;
+                if (reset) break;
             }
+            result[key] = {used, reset};
         }
         if ("seven_day" in result) return result;
         await new Promise(resolve => setTimeout(resolve, 300));
@@ -49,6 +49,17 @@ const zhDays = {"日": 0, "天": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五
 const enDays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
 export function resetTimestamp(text, now, windowHours) {
+    if (!text) return null;
+    const zhTime = text.match(/^於\s*(上午|下午)?\s*(\d{1,2}):(\d{2})\s*重[設置]$/);
+    const enTime = text.match(/^Resets?\s+at\s+(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (zhTime || enTime) {
+        const time = zhTime ? zhTime.slice(2, 4).join(":") : enTime.slice(1, 3).join(":");
+        const period = zhTime ? zhTime[1] : enTime[3] || "";
+        const forDay = day => zhTime ? `${day}${period || ""}${time} 重設` : `Resets ${day} at ${time} ${period}`;
+        const current = resetTimestamp(forDay(zhTime ? "今天" : "today"), now, windowHours);
+        return current ?? resetTimestamp(forDay(zhTime ? "明天" : "tomorrow"), now, windowHours);
+    }
+
     const zh = text.match(/^(星期|週|禮拜)?([日一二三四五六天]|今天|明天)\s*(上午|下午)?\s*(\d{1,2}):(\d{2})\s*重[設置]$/);
     const en = text.match(/^Resets?\s+(?:on\s+)?(today|tomorrow|Sun\w*|Mon\w*|Tue\w*|Wed\w*|Thu\w*|Fri\w*|Sat\w*)[\s,]*(?:at\s+)?(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
     const relative = text.match(/^Resets? in\s+(?:(\d+)\s*(?:hr?s?|hours?)\s*)?(?:(\d+)\s*(?:m(?:ins?)?|minutes?))?$/i);
@@ -79,10 +90,11 @@ export function toPayload(snapshot, now = new Date()) {
     for (const [key, hours] of [["five_hour", 5], ["seven_day", 168]]) {
         const window = snapshot?.[key];
         if (!window) continue;
-        rate_limits[key] = {
-            used_percentage: window.used,
-            resets_at: resetTimestamp(window.reset, now, hours),
-        };
+        const resetsAt = resetTimestamp(window.reset, now, hours);
+        rate_limits[key] = {used_percentage: window.used, resets_at: resetsAt};
+        if (key === "five_hour" && window.used === 0 && resetsAt === null) {
+            rate_limits[key].idle = /從您的第一則訊息開始|Starts? with your first message/i.test(window.reset || "");
+        }
     }
     return {rate_limits};
 }

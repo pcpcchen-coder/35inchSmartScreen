@@ -3,6 +3,7 @@
 import json
 from dataclasses import asdict, dataclass, replace
 from datetime import date
+from ipaddress import ip_address
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -33,6 +34,8 @@ class Preferences:
     blank_on_stop: bool = False
     chatgpt_subscription: Subscription | None = None
     claude_subscription: Subscription | None = None
+    nous_core_port: int | None = None
+    pi_host: str | None = None
 
 
 def read_preferences(path=PREFERENCES):
@@ -55,7 +58,29 @@ def read_preferences(path=PREFERENCES):
                 values[field] = subscription(entry.get("event"), entry.get("date"))
             except ValueError:
                 pass
+    try:
+        values.update(monitor_values(raw.get("nous_core_port"), raw.get("pi_host")))
+    except ValueError:
+        pass
     return Preferences(**values)
+
+
+def monitor_values(nous_port, pi_host):
+    if nous_port is not None and (type(nous_port) is not int or not 1 <= nous_port <= 65535):
+        raise ValueError("Use a valid localhost port for Nous Core")
+    if pi_host is not None:
+        if not isinstance(pi_host, str):
+            raise ValueError("Use a local IP address for the Pi")
+        address = ip_address(pi_host)
+        if not (address.is_private and not address.is_loopback and not address.is_unspecified):
+            raise ValueError("Use a local network IP address for the Pi")
+        pi_host = str(address)
+    return {"nous_core_port": nous_port, "pi_host": pi_host}
+
+
+def set_monitors(nous_port, pi_host, path=PREFERENCES):
+    updated = replace(read_preferences(path), **monitor_values(nous_port, pi_host))
+    save_preferences(updated, path)
 
 
 def set_preference(key, value, path=PREFERENCES):

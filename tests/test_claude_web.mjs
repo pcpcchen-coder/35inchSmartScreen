@@ -23,7 +23,7 @@ test("renders weekday reset text as a local timestamp without inventing missing 
         five_hour: {used: 0, reset: "從您的第一則訊息開始"},
         seven_day: {used: 23, reset: "Resets Thursday at 11:00 AM"},
     }, now).rate_limits, {
-        five_hour: {used_percentage: 0, resets_at: null},
+        five_hour: {used_percentage: 0, resets_at: null, idle: true},
         seven_day: {used_percentage: 23, resets_at: new Date(2026, 10, 19, 11).getTime() / 1000},
     });
 });
@@ -45,18 +45,27 @@ test("reads quota meters and ignores product breakdown meters", async () => {
     globalThis.document = {
         getElementById: id => ({innerText: names[id]}),
         querySelectorAll: () => [
-            meter("session", "0", "從您的第一則訊息開始"),
+            meter("session", "9", "於 上午11:40 重設"),
             meter("week", "29", "星期四上午11:00 重設"),
             meter("product", "99", "星期四上午11:00 重設"),
         ],
     };
     try {
         assert.deepEqual(await readUsagePage(), {
-            five_hour: {used: 0, reset: "從您的第一則訊息開始"},
+            five_hour: {used: 9, reset: "於 上午11:40 重設"},
             seven_day: {used: 29, reset: "星期四上午11:00 重設"},
         });
     } finally {
         delete globalThis.document;
         delete globalThis.location;
     }
+});
+
+test("reads the same-day Chinese format and preserves quota when the time is unknown", () => {
+    const today = new Date(2026, 10, 17, 6, 55);
+    const reset = new Date(2026, 10, 17, 11, 40).getTime() / 1000;
+    assert.deepEqual(toPayload({five_hour: {used: 9, reset: "於 上午11:40 重設"}}, today).rate_limits,
+        {five_hour: {used_percentage: 9, resets_at: reset}});
+    assert.deepEqual(toPayload({five_hour: {used: 0, reset: null}}, today).rate_limits,
+        {five_hour: {used_percentage: 0, resets_at: null, idle: false}});
 });

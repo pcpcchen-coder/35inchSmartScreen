@@ -37,6 +37,9 @@ def parse_limits(payload, *, allow_missing_reset=False):
             if type(reset) is not int or reset <= 0:
                 continue
         valid[name] = {"used_percentage": used, "resets_at": reset}
+        idle = window.get("idle")
+        if name == "five_hour" and used == 0 and reset is None and type(idle) is bool:
+            valid[name]["idle"] = idle
     return valid
 
 
@@ -69,7 +72,7 @@ def read_usage(path=CACHE):
             return None
         received_at = datetime.fromtimestamp(payload["received_at"]).astimezone()
         windows = tuple(
-            Window(round(window["used_percentage"]), PERIODS[name], window["resets_at"])
+            Window(round(window["used_percentage"]), PERIODS[name], window["resets_at"], window.get("idle"))
             for name, window in limits.items()
         )
         return ClaudeUsage(received_at, windows, source)
