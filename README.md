@@ -87,7 +87,7 @@ Claude 區塊顯示 5 小時與每週額度。匯入或接收到新資料後，�
 
 1. 在專案目錄執行 `.venv/bin/python install_claude_bridge.py install`，註冊只接受本擴充功能的本機橋接程式。
 2. 在 Chrome 的 `chrome://extensions` 啟用開發人員模式，選「載入未封裝項目」，並選取專案裡的 `chrome-claude` 資料夾。
-3. 在登入後的 Claude 用量頁點擴充功能圖示。出現 **ON** 就已同步，點同一圖示可停止。請保留該用量頁籤，並避開裝置休眠。
+3. 在登入後的 Claude 用量頁點擴充功能圖示。出現 **ON** 就已同步，點同一圖示可停止。建議在獨立 Chrome 視窗保留這個用量頁，再將視窗縮到最小。用其他頁籤開啟 Claude Code 或聊天。若離開用量頁，回到該頁並重新點圖示即可恢復同步。
 
 橋接程式只保存額度和重設時間，不存 Cookie 或 API 金鑰。若顯示 **!**，請確認本機橋接已註冊、瀏覽器已登入。解除安裝時，在 Chrome 移除擴充功能，並執行 `.venv/bin/python install_claude_bridge.py uninstall`。
 
