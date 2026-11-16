@@ -12,6 +12,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from claude_usage import ClaudeUsage, read_usage
 from turzx import HEIGHT, WIDTH, Display
 from usage import CodexServer, UsageError, Window, daily_tokens, find_codex, quota_windows
 
@@ -24,6 +25,8 @@ TEAL = "#64E2C1"
 SKY = "#8EBDFF"
 AMBER = "#FFD17F"
 RED = "#FF9C8F"
+CLAUDE = "#F5A987"
+PAGE_SECONDS = 20
 FONT_DIR = Path("/System/Library/Fonts")
 
 
@@ -149,12 +152,23 @@ def token_chart(draw, top, snapshot, now):
     label(draw, (292, bottom - 16), days[-1].strftime("%m/%d"), 11, MUTED, "mono", "rt")
 
 
-def render(snapshot, now, demo=False):
+def page(title, subtitle, accent):
     image = Image.new("RGB", (WIDTH, HEIGHT), BG)
     draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, WIDTH - 1, 3), fill=TEAL)
-    label(draw, (16, 18), "WORK + CODEX", 13, TEAL, "bold")
-    label(draw, (15, 38), "ChatGPT", 47, TEXT, "bold")
+    draw.rectangle((0, 0, WIDTH - 1, 3), fill=accent)
+    label(draw, (16, 18), subtitle, 13, accent, "bold")
+    label(draw, (15, 38), title, 47, TEXT, "bold")
+    return image, draw
+
+
+def badge(draw, status, color):
+    width = max(47, round(draw.textlength(status, font=font(12, "bold"))) + 20)
+    draw.rounded_rectangle((304 - width, 15, 304, 39), radius=12, outline=color)
+    label(draw, (304 - width / 2, 22), status, 12, color, "bold", "mt")
+
+
+def render(snapshot, now, demo=False):
+    image, draw = page("ChatGPT", "WORK + CODEX", TEAL)
 
     if demo:
         status, color = "DEMO", SKY
@@ -165,9 +179,7 @@ def render(snapshot, now, demo=False):
         status, color = "PARTIAL", AMBER
     else:
         status, color = "LIVE", TEAL
-    badge_width = max(47, round(draw.textlength(status, font=font(12, "bold"))) + 20)
-    draw.rounded_rectangle((304 - badge_width, 15, 304, 39), radius=12, outline=color)
-    label(draw, (304 - badge_width / 2, 22), status, 12, color, "bold", "mt")
+    badge(draw, status, color)
 
     windows = snapshot.windows or ()
     for index, window in enumerate(windows):
@@ -185,8 +197,41 @@ def render(snapshot, now, demo=False):
     return image
 
 
-def demo_image(path):
+def render_claude(usage, now, demo=False):
+    image, draw = page("Claude", "SUBSCRIPTION USAGE", CLAUDE)
+    expired = any(window.reset_at <= now.timestamp() for window in usage.windows)
+    if demo:
+        badge(draw, "DEMO", SKY)
+    elif expired:
+        badge(draw, "UPDATE DUE", AMBER)
+    elif now - usage.received_at > timedelta(minutes=15):
+        badge(draw, "CACHED", AMBER)
+    else:
+        badge(draw, "RECENT", CLAUDE)
+    for index, window in enumerate(usage.windows):
+        top = 96 + index * 110
+        if window.reset_at > now.timestamp():
+            quota_card(draw, top, window, now, CLAUDE)
+        else:
+            panel(draw, top, 102)
+            label(draw, (27, top + 12), window_name(window.minutes), 13, MUTED, "bold")
+            label(draw, (27, top + 42), "Awaiting new limit data", 20, TEXT, "bold")
+
+    label(draw, (16, 332), "UPDATES AFTER CLAUDE CODE REPLIES", 12, MUTED, "bold")
+    label(draw, (16, 450), "LAST RECEIVED", 12, MUTED, "bold")
+    label(draw, (304, 448), usage.received_at.strftime("%m/%d %H:%M"), 16, TEXT, "mono", "rt")
+    return image
+
+
+def demo_image(path, claude=False):
     now = datetime.fromisoformat("2026-11-16T19:24:30+08:00")
+    if claude:
+        sample = ClaudeUsage(now, (
+            Window(21, 300, int(now.timestamp()) + 6680),
+            Window(54, 10080, int(now.timestamp()) + 259200),
+        ))
+        render_claude(sample, now, demo=True).save(path)
+        return
     end = now.astimezone(UTC).date()
     snapshot = Snapshot(
         (Window(25, 300, int(now.timestamp()) + 8650),
@@ -205,11 +250,13 @@ def main():
     parser.add_argument("--codex", help="path to the Codex executable")
     parser.add_argument("--port", help="USB device selector by serial path (default: autodetect)")
     parser.add_argument("--once", action="store_true", help="fetch and write one hardware frame")
-    parser.add_argument("--preview", type=Path, help="save a demo PNG without accessing account or USB")
+    preview = parser.add_mutually_exclusive_group()
+    preview.add_argument("--preview", type=Path, help="save a ChatGPT demo PNG")
+    preview.add_argument("--preview-claude", type=Path, help="save a Claude demo PNG")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-    if args.preview:
-        demo_image(args.preview)
+    if args.preview or args.preview_claude:
+        demo_image(args.preview or args.preview_claude, claude=bool(args.preview_claude))
         return 0
     if args.interval < 10:
         parser.error("--interval must be at least 10 seconds")
@@ -222,6 +269,7 @@ def main():
     server = CodexServer(executable)
     screen = Display(args.port)
     snapshot = Snapshot()
+    started = time.monotonic()
     next_poll = 0
     usb_offline = None
     stopping = False
@@ -238,7 +286,13 @@ def main():
                 snapshot.refresh(server)
                 next_poll = time.monotonic() + args.interval
             try:
-                screen.show(render(snapshot, datetime.now().astimezone()))
+                now = datetime.now().astimezone()
+                on_claude_page = not args.once and int(
+                    (time.monotonic() - started) // PAGE_SECONDS
+                ) % 2
+                claude = read_usage() if on_claude_page else None
+                frame = render_claude(claude, now) if claude else render(snapshot, now)
+                screen.show(frame)
             except OSError as error:
                 if usb_offline is not True or args.once:
                     logging.warning("USB display unavailable: %s", error)

@@ -1,6 +1,6 @@
-# TURZX 3.5 吋 ChatGPT 用量面板
+# TURZX 3.5 吋用量面板
 
-用 Mac 把 ChatGPT 的 Work／Codex 用量送到 TURZX 3.5 吋 USB 小螢幕。畫面使用直向 320 × 480 解析度。
+用 Mac 把 ChatGPT 的 Work／Codex 用量送到 TURZX 3.5 吋 USB 小螢幕，也能接上 Claude Code 額度。畫面使用直向 320 × 480 解析度。
 
 ![示意圖，使用範例數字](docs/preview.png)
 
@@ -55,6 +55,29 @@ tail -n 30 ~/Library/Logs/35inchSmartScreen/dashboard.log
 
 要停止服務並取消自動啟動，執行 `.venv/bin/python service.py uninstall`。程式資料夾移動後，請從新位置重新執行安裝。
 
+## 加上 Claude 用量
+
+![Claude 面板示意圖，使用範例數字](docs/claude-preview.png)
+
+Claude 頁面使用 Claude Code 官方狀態列回傳的 5 小時與每週額度。請先安裝 Claude Code，並用 Claude 訂閱帳號登入。收到第一筆額度後，小螢幕每 20 秒在 ChatGPT 和 Claude 頁面間切換。
+
+1. 終端機進入這個 repo，執行以下指令產生 `statusLine` 設定內容。
+
+   ```sh
+   .venv/bin/python -c 'import json, shlex, sys; from pathlib import Path; print(json.dumps({"statusLine": {"type": "command", "command": shlex.join([sys.executable, str(Path("claude_usage.py").resolve())])}}, indent=2))'
+   ```
+
+2. 把產生的 `statusLine` 欄位合併到 `~/.claude/settings.json`。如果原本已有自訂狀態列，可在原本的腳本中把同一份 stdin JSON 也傳給產生的指令，並把這段指令的 stdout 導向 `/dev/null`，以保留原本的終端機輸出。
+3. 開啟 Claude Code，等平常使用時收到第一個助理回覆。不必重啟小螢幕服務。
+
+Claude 頁面會顯示最後收到資料的時間。超過 15 分鐘沒收到資料會標示 **CACHED**。額度週期已到期時會顯示 **UPDATE DUE**，等新的回覆提供額度。只使用 Claude 網頁或桌面聊天時，面板要等下次 Claude Code 回覆才會更新。
+
+介接腳本只把時間、用量百分比和重設時間寫到本機的 `~/Library/Caches/35inchSmartScreen/claude-usage.json`。移除狀態列設定並刪除該檔案，即可取消 Claude 輪播。
+
+```sh
+.venv/bin/python dashboard.py --preview-claude claude-preview.png
+```
+
 ## 畫面出現橫線或亂碼
 
 從舊版升級時，更新 Python 相依套件，然後重新啟動背景服務。若仍有殘留亂碼，拔掉這台小螢幕的 USB 再插回，讓螢幕重新初始化。
@@ -73,3 +96,4 @@ git pull --ff-only
 - [Turing Smart Screen 3.5 吋硬體識別](https://github.com/mathoudebine/turing-smart-screen-python/wiki/Hardware-revisions#turing-smart-screen-35)
 - [TURZX Rev. A 序列埠協定參考](https://github.com/mathoudebine/turing-smart-screen-python/blob/main/library/lcd/lcd_comm_rev_a.py)
 - [macOS 花屏與 USB bulk 傳輸驗證](https://github.com/mathoudebine/turing-smart-screen-python/issues/7)
+- [Claude Code 狀態列的訂閱用量欄位](https://code.claude.com/docs/en/statusline#rate-limit-usage)
