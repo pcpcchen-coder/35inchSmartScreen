@@ -6,14 +6,13 @@
 
 ## 畫面顯示
 
-預設在同一畫面顯示 ChatGPT 和 Claude。兩家的區塊各自顯示資料時間，底部保留 ChatGPT 的近七天 token 用量。
+預設在同一畫面顯示 ChatGPT 和 Claude。兩家的區塊各自顯示剩餘額度、資料時間和已設定的訂閱日期。
 
 - **剩餘額度**依帳號實際回傳的週期顯示，例如 5 小時與每週剩餘百分比，以及距離重設的時間。
-- **最近 7 天 token 用量**顯示每日長條與總計。圖表按 UTC 日期排列，包含今天。
-- **最後同步時間**以 Mac 的本地時間顯示。預設每 30 秒向 Codex App Server 查詢一次，最新用量以服務端回傳為準。重設倒數在本機更新。
-- **LIVE** 表示兩項資料都已取得。**PARTIAL** 表示其中一項查詢失敗。**STALE** 顯示先前取得的資料，**OFFLINE** 表示兩項資料都還未取得。
+- **最後更新時間**以 Mac 的本地時間顯示。ChatGPT 預設每 30 秒查詢一次，Claude 的時間代表最後匯入或接收的時間。重設倒數在本機更新。
+- **LIVE** 表示 ChatGPT 額度已同步。**STALE** 表示使用上次取得的資料，**OFFLINE** 表示尚未取得額度。Claude 從桌面 App 匯入時顯示 **SNAPSHOT**。
 
-額度來自 Work／Codex 共用用量，token 圖使用 App Server 的帳號統計。一般 Chat 的模型訊息上限和 OpenAI API 帳單有各自的用量來源。程式使用 Codex 既有的 ChatGPT 登入，只查詢用量，不會發送模型請求，也不會把用量存進檔案或 GitHub。
+ChatGPT 額度來自 Work／Codex 共用用量。一般 Chat 的模型訊息上限和 OpenAI API 帳單有各自的用量來源。程式使用 Codex 既有的 ChatGPT 登入，只查詢用量，不會發送模型請求，也不會把用量存進檔案或 GitHub。
 
 ## 安裝與試跑
 
@@ -69,6 +68,7 @@ tail -n 30 ~/Library/Logs/35inchSmartScreen/dashboard.log
 
 - **啟動面板**會立刻開始並設定登入自動啟動。**停止面板**會結束更新並取消面板的登入自動啟動。
 - **立即同步 ChatGPT**會要求背景服務重新查詢。Claude 資料仍由 Claude Code 狀態列提供。
+- **訂閱日期**可分別設定 ChatGPT 或 Claude 的自動續訂與到期日期，或清除日期。日期保存在本機，帳單變更後可在同一處更新。
 - **顯示內容**可選同頁顯示、只顯示 ChatGPT 或只顯示 Claude。尚未接到用量時，對應區塊會顯示等待畫面。
 - **同步間隔與螢幕亮度**可直接調整。勾選 **停止面板時熄屏** 可在正常停止時關閉小螢幕。
 - **結束選單列工具**可暫時收起圖示。要再開啟，可從 Finder 開啟 `~/Applications/SmartScreen.app`。
@@ -100,7 +100,7 @@ Claude 區塊顯示 5 小時與每週額度。匯入或接收到新資料後，�
 2. 把產生的 `statusLine` 欄位合併到 `~/.claude/settings.json`。如果原本已有自訂狀態列，可在原本的腳本中把同一份 stdin JSON 也傳給產生的指令，並把這段指令的 stdout 導向 `/dev/null`，以保留原本的終端機輸出。
 3. 開啟 Claude Code，等平常使用時收到第一個助理回覆。不必重啟小螢幕服務。
 
-Claude 區塊會顯示最後收到資料的時間。超過 15 分鐘沒收到資料會標示 **CACHED**。額度週期已到期時會顯示 **UPDATE DUE**，等新的回覆提供額度。只使用 Claude 網頁或桌面聊天時，面板要等下次 Claude Code 回覆才會更新。
+Claude 區塊會顯示最後收到資料的時間。Claude Code 狀態列資料超過 15 分鐘會標示 **CACHED**。額度週期已到期時會顯示 **UPDATE DUE**，等新的回覆提供額度。只使用 Claude 網頁或桌面聊天時，面板要等下次 Claude Code 回覆才會更新。
 
 介接腳本只把時間、用量百分比和重設時間寫到本機的 `~/Library/Caches/35inchSmartScreen/claude-usage.json`。移除狀態列設定並刪除該檔案，即可清除小螢幕上已快取的 Claude 用量。
 
@@ -125,6 +125,8 @@ git pull --ff-only
 
 ## 參考資料
 
+- [ChatGPT 帳單設定](https://chatgpt.com/settings/billing)
+- [Claude 帳單設定](https://claude.ai/settings/billing)
 - [Codex App Server 用量與額度介面](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)
 - [OpenAI Work／Codex 用量說明](https://help.openai.com/en/articles/20001516-managing-usage-with-gpt-6-astra-in-work-and-codex)
 - [Turing Smart Screen 3.5 吋硬體識別](https://github.com/mathoudebine/turing-smart-screen-python/wiki/Hardware-revisions#turing-smart-screen-35)

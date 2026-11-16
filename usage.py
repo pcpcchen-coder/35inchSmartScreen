@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 BUNDLED_CODEX = Path(
@@ -122,14 +121,3 @@ def quota_windows(response):
         if type(used) is int:
             windows.append(Window(used, window.get("windowDurationMins"), window.get("resetsAt")))
     return tuple(windows)
-
-
-def daily_tokens(response):
-    buckets = response.get("dailyUsageBuckets")
-    if buckets is None:
-        raise UsageError("No daily token data")
-    return {
-        date.fromisoformat(bucket["startDate"]): bucket["tokens"]
-        for bucket in buckets
-        if type(bucket.get("tokens")) is int and bucket["tokens"] >= 0
-    }

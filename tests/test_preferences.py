@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from preferences import Preferences, read_preferences, set_preference
+from preferences import Preferences, Subscription, read_preferences, set_preference, set_subscription
 
 
 class PreferencesTests(unittest.TestCase):
@@ -34,3 +34,18 @@ class PreferencesTests(unittest.TestCase):
             self.assertEqual(read_preferences(path), Preferences(
                 mode="combined", poll_seconds=15, brightness=60,
             ))
+
+    def test_subscription_dates_can_be_edited_independently_and_cleared(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "preferences.json"
+            set_preference("brightness", "80", path)
+            set_subscription("chatgpt", "renews", "2027-02-28", path)
+            set_subscription("claude", "ends", "2027-02-15", path)
+            with self.assertRaises(ValueError):
+                set_subscription("claude", "ends", "2027-02-30", path)
+            self.assertEqual(read_preferences(path), Preferences(
+                brightness=80, chatgpt_subscription=Subscription("renews", "2027-02-28"),
+                claude_subscription=Subscription("ends", "2027-02-15"),
+            ))
+            set_subscription("claude", "clear", path=path)
+            self.assertIsNone(read_preferences(path).claude_subscription)

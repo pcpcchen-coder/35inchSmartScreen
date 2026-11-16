@@ -1,11 +1,18 @@
 import AppKit
 
+private struct SubscriptionDate: Decodable, Equatable {
+    let event: String
+    let date: String
+}
+
 private struct MenuState: Decodable, Equatable {
     let enabled: Bool
     let mode: String
     let poll_seconds: Int
     let brightness: Int?
     let blank_on_stop: Bool
+    let chatgpt_subscription: SubscriptionDate?
+    let claude_subscription: SubscriptionDate?
 }
 
 private struct Service {
@@ -122,6 +129,7 @@ private final class MenuController: NSObject, NSApplicationDelegate, NSMenuDeleg
         refresh.isEnabled = state.enabled && state.mode != "claude"
         menu.addItem(refresh)
         menu.addItem(item("匯入 Claude App 用量…", action: #selector(importClaude)))
+        menu.addItem(subscriptionMenu(state))
         menu.addItem(.separator())
 
         menu.addItem(choices("顯示內容", key: "mode", selected: state.mode, options: [
@@ -142,6 +150,64 @@ private final class MenuController: NSObject, NSApplicationDelegate, NSMenuDeleg
         let blank = command("停止面板時熄屏", ["set", "blank_on_stop", String(!state.blank_on_stop)])
         blank.state = state.blank_on_stop ? .on : .off
         menu.addItem(blank)
+    }
+
+    private func subscriptionMenu(_ state: MenuState) -> NSMenuItem {
+        let parent = item("訂閱日期")
+        parent.isEnabled = true
+        let submenu = NSMenu(title: parent.title)
+        submenu.autoenablesItems = false
+        for (name, provider, date) in [
+            ("ChatGPT", "chatgpt", state.chatgpt_subscription),
+            ("Claude", "claude", state.claude_subscription),
+        ] {
+            let suffix = date.map { $0.event == "ends" ? "到期 \($0.date)" : "續訂 \($0.date)" }
+            let button = item(suffix.map { "\(name) · \($0)…" } ?? "\(name)…",
+                              action: #selector(editSubscription(_:)))
+            button.representedObject = provider
+            submenu.addItem(button)
+        }
+        parent.submenu = submenu
+        return parent
+    }
+
+    @objc private func editSubscription(_ sender: NSMenuItem) {
+        guard let provider = sender.representedObject as? String else { return }
+        let isChatGPT = provider == "chatgpt"
+        let current = isChatGPT ? state?.chatgpt_subscription : state?.claude_subscription
+        let alert = NSAlert()
+        alert.messageText = isChatGPT ? "ChatGPT 訂閱日期" : "Claude 訂閱日期"
+        alert.informativeText = "請依帳單頁選擇自動續訂或到期，並輸入 YYYY-MM-DD。"
+        alert.addButton(withTitle: "儲存")
+        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: "清除日期")
+
+        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 340, height: 104))
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        let event = NSPopUpButton()
+        event.addItems(withTitles: ["自動續訂", "到期"])
+        event.selectItem(at: current?.event == "ends" ? 1 : 0)
+        event.setAccessibilityLabel("日期類型")
+        stack.addArrangedSubview(NSTextField(labelWithString: "日期類型"))
+        stack.addArrangedSubview(event)
+        let day = importField("日期", "YYYY-MM-DD", into: stack)
+        day.stringValue = current?.date ?? ""
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = day
+        NSApp.activate(ignoringOtherApps: true)
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            let value = day.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let kind = event.indexOfSelectedItem == 1 ? "ends" : "renews"
+            perform(["subscription", "--provider", provider, "--event", kind, "--date", value])
+        case .alertThirdButtonReturn:
+            perform(["subscription", "--provider", provider, "--event", "clear"])
+        default:
+            break
+        }
     }
 
     private func item(_ title: String, action: Selector? = nil) -> NSMenuItem {

@@ -5,17 +5,17 @@ import argparse
 import logging
 import signal
 import time
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
 from claude_usage import ClaudeUsage, read_usage
-from preferences import read_preferences
+from preferences import Preferences, Subscription, read_preferences
 from turzx import HEIGHT, WIDTH, Display
-from usage import CodexServer, UsageError, Window, daily_tokens, find_codex, quota_windows
+from usage import CodexServer, UsageError, Window, find_codex, quota_windows
 
 BG = "#10181A"
 PANEL = "#192528"
@@ -33,29 +33,22 @@ FONT_DIR = Path("/System/Library/Fonts")
 @dataclass
 class Snapshot:
     windows: tuple[Window, ...] | None = None
-    tokens: dict = field(default_factory=dict)
     limits_at: datetime | None = None
-    tokens_at: datetime | None = None
-    errors: set[str] = field(default_factory=set)
+    failed: bool = False
 
     def refresh(self, server):
-        for name, method, transform, data_attr, time_attr in (
-            ("limits", "account/rateLimits/read", quota_windows, "windows", "limits_at"),
-            ("tokens", "account/usage/read", daily_tokens, "tokens", "tokens_at"),
-        ):
-            try:
-                data = transform(server.call(method))
-            except (UsageError, KeyError, TypeError, ValueError):
-                if name not in self.errors:
-                    logging.warning("Could not refresh %s", name)
-                self.errors.add(name)
-            else:
-                if getattr(self, time_attr) is None or name in self.errors:
-                    logging.info("%s data received", name.capitalize())
-                setattr(self, data_attr, data)
-                setattr(self, time_attr, datetime.now().astimezone())
-                self.errors.discard(name)
-        logging.debug("Usage refresh finished")
+        try:
+            windows = quota_windows(server.call("account/rateLimits/read"))
+        except (UsageError, KeyError, TypeError, ValueError):
+            if not self.failed:
+                logging.warning("Could not refresh ChatGPT limits")
+            self.failed = True
+        else:
+            if self.limits_at is None or self.failed:
+                logging.info("ChatGPT limits received")
+            self.windows = windows
+            self.limits_at = datetime.now().astimezone()
+            self.failed = False
 
 
 @lru_cache
@@ -111,71 +104,9 @@ def allowance(window, accent):
     return remaining, color
 
 
-def quota_card(draw, top, window, now, base_color, *, reset_text=None):
-    panel(draw, top, 102)
-    remaining, color = allowance(window, base_color)
-    label(draw, (27, top + 12), window_name(window.minutes), 13, MUTED, "bold")
-    label(draw, (26, top + 28), f"{remaining}%", 43, color, "bold")
-    label(draw, (292, top + 37), "LEFT", 13, color, "bold", "rt")
-    label(draw, (292, top + 56), reset_text or reset_label(window.reset_at, now), 14, TEXT, anchor="rt")
-    draw.rounded_rectangle((27, top + 80, 292, top + 88), radius=4, fill=BORDER)
-    if remaining:
-        draw.rounded_rectangle((27, top + 80, 27 + round(265 * remaining / 100), top + 88),
-                               radius=4, fill=color)
-
-
-def compact(value):
-    for divisor, suffix in ((10**12, "T"), (10**9, "B"), (10**6, "M"), (10**3, "K")):
-        if value >= divisor:
-            return f"{value / divisor:.1f}{suffix}"
-    return str(value)
-
-
-def token_chart(draw, top, snapshot, now, *, bottom=431, heading="TOKENS / 7 DAYS"):
-    panel(draw, top, bottom - top + 1)
-    label(draw, (27, top + 12), heading, 13, MUTED, "bold")
-    if snapshot.tokens_at is None:
-        label(draw, (27, top + 39), "Token history unavailable", 18)
-        return
-
-    end = now.astimezone(UTC).date()
-    days = [end - timedelta(days=offset) for offset in range(6, -1, -1)]
-    counts = [snapshot.tokens.get(day, 0) for day in days]
-    label(draw, (292, top + 10), compact(sum(counts)), 18, TEAL, "bold", "rt")
-    baseline = bottom - 27
-    ceiling = max(max(counts), 1)
-    draw.line((27, baseline + 2, 292, baseline + 2), fill=BORDER)
-    for index, count in enumerate(counts):
-        x = 27 + index * 40
-        if count:
-            height = max(2, round((baseline - top - 35) * count / ceiling))
-            color = TEAL if index == 6 else "#4A8B83"
-            draw.rounded_rectangle((x, baseline - height, x + 24, baseline - 1),
-                                   radius=3, fill=color)
-    label(draw, (27, bottom - 16), days[0].strftime("%m/%d"), 11, MUTED, "mono")
-    label(draw, (292, bottom - 16), days[-1].strftime("%m/%d"), 11, MUTED, "mono", "rt")
-
-
-def page(title, subtitle, accent):
-    image = Image.new("RGB", (WIDTH, HEIGHT), BG)
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, WIDTH - 1, 3), fill=accent)
-    label(draw, (16, 18), subtitle, 13, accent, "bold")
-    label(draw, (15, 38), title, 47, TEXT, "bold")
-    return image, draw
-
-
-def badge(draw, status, color):
-    width = max(47, round(draw.textlength(status, font=font(12, "bold"))) + 20)
-    draw.rounded_rectangle((304 - width, 15, 304, 39), radius=12, outline=color)
-    label(draw, (304 - width / 2, 22), status, 12, color, "bold", "mt")
-
-
 def chat_status(snapshot):
-    if len(snapshot.errors) == 2:
-        return ("STALE" if snapshot.limits_at or snapshot.tokens_at else "OFFLINE", AMBER)
-    if snapshot.errors:
-        return "PARTIAL", AMBER
+    if snapshot.failed:
+        return ("STALE" if snapshot.limits_at else "OFFLINE", AMBER)
     return "LIVE", TEAL
 
 
@@ -184,9 +115,10 @@ def claude_status(usage, now):
         return "WAITING", MUTED
     if any(quota_expired(window, now) for window in usage.windows):
         return "UPDATE DUE", AMBER
-    if now - usage.received_at > timedelta(minutes=15):
-        return "CACHED", AMBER
-    return ("SNAPSHOT" if usage.source == "desktop" else "RECENT", CLAUDE)
+    cached = now - usage.received_at > timedelta(minutes=15)
+    if usage.source == "desktop":
+        return "SNAPSHOT", AMBER if cached else CLAUDE
+    return ("CACHED", AMBER) if cached else ("RECENT", CLAUDE)
 
 
 def quota_expired(window, now):
@@ -197,134 +129,104 @@ def session_not_started(window):
     return window.reset_at is None and window.minutes == 300 and window.used == 0
 
 
-def render(snapshot, now, demo=False):
-    image, draw = page("ChatGPT", "WORK + CODEX", TEAL)
-    badge(draw, *(("DEMO", SKY) if demo else chat_status(snapshot)))
-
-    windows = snapshot.windows or ()
-    for index, window in enumerate(windows):
-        quota_card(draw, 96 + index * 110, window, now, (TEAL, SKY)[index])
-    if not windows:
-        panel(draw, 96, 102)
-        message = "Quota unavailable" if snapshot.windows is None else "No quota window reported"
-        label(draw, (27, 120), message, 20, TEXT, "bold")
-    token_chart(draw, 96 + max(1, len(windows)) * 110, snapshot, now)
-
-    label(draw, (16, 450), "LAST SYNC", 12, MUTED, "bold")
-    times = [stamp for stamp in (snapshot.limits_at, snapshot.tokens_at) if stamp]
-    last_sync = min(times).strftime("%H:%M:%S") if times else "--:--:--"
-    label(draw, (304, 448), last_sync, 17, TEXT, "mono", "rt")
-    return image
-
-
-def render_claude(usage, now, demo=False):
-    image, draw = page("Claude", "SUBSCRIPTION USAGE", CLAUDE)
-    if usage is None:
-        panel(draw, 96, 102)
-        label(draw, (27, 119), "Waiting for usage data", 21, TEXT, "bold")
-        label(draw, (27, 156), "Import or connect Claude Code", 15, MUTED)
-        return image
-    badge(draw, *(("DEMO", SKY) if demo else claude_status(usage, now)))
-    for index, window in enumerate(usage.windows):
-        top = 96 + index * 110
-        if not quota_expired(window, now):
-            reset_text = "Starts with first message" if session_not_started(window) else None
-            quota_card(draw, top, window, now, CLAUDE, reset_text=reset_text)
-        else:
-            panel(draw, top, 102)
-            label(draw, (27, top + 12), window_name(window.minutes), 13, MUTED, "bold")
-            label(draw, (27, top + 42), "Awaiting new limit data", 20, TEXT, "bold")
-
-    source_text = ("IMPORTED FROM CLAUDE DESKTOP" if usage.source == "desktop"
-                   else "UPDATES AFTER CLAUDE CODE REPLIES")
-    label(draw, (16, 332), source_text, 12, MUTED, "bold")
-    label(draw, (16, 450), "LAST IMPORTED" if usage.source == "desktop" else "LAST RECEIVED",
-          12, MUTED, "bold")
-    label(draw, (304, 448), usage.received_at.strftime("%m/%d %H:%M"), 16, TEXT, "mono", "rt")
-    return image
-
-
-def compact_quota(draw, box, window, now, accent, *, expired=False):
-    left, top, right, bottom = box
-    draw.rounded_rectangle(box, radius=12, fill=PANEL, outline=BORDER)
-    label(draw, (left + 12, top + 10), window_name(window.minutes), 12, MUTED, "bold")
-    if expired:
-        label(draw, (left + 12, top + 29), "–", 35, MUTED, "bold")
-        label(draw, (left + 12, top + 71), "Awaiting update", 12, MUTED)
+def quota_card(draw, box, window, now, accent):
+    left, top, right, _ = box
+    draw.rounded_rectangle(box, radius=13, fill=PANEL, outline=BORDER)
+    label(draw, (left + 12, top + 12), window_name(window.minutes), 13, MUTED, "bold")
+    if quota_expired(window, now):
+        label(draw, (left + 11, top + 33), "–", 46, MUTED, "bold")
+        label(draw, (left + 12, top + 103), "Awaiting update", 13, MUTED)
         return
 
     remaining, color = allowance(window, accent)
-    label(draw, (left + 11, top + 25), f"{remaining}%", 36, color, "bold")
+    label(draw, (left + 11, top + 31), f"{remaining}%", 46, color, "bold")
     track_left, track_right = left + 12, right - 12
-    draw.rounded_rectangle((track_left, top + 62, track_right, top + 66), radius=2, fill=BORDER)
+    draw.rounded_rectangle((track_left, top + 85, track_right, top + 90), radius=3, fill=BORDER)
     if remaining:
         filled = round((track_right - track_left) * remaining / 100)
-        draw.rounded_rectangle((track_left, top + 62, track_left + filled, top + 66),
-                               radius=2, fill=color)
+        draw.rounded_rectangle((track_left, top + 85, track_left + filled, top + 90),
+                               radius=3, fill=color)
     reset = "Starts on first use" if session_not_started(window) else reset_label(window.reset_at, now)
-    label(draw, (left + 12, top + 74), reset, 12, TEXT)
+    label(draw, (left + 12, top + 103), reset, 13, TEXT)
 
 
-def provider_section(draw, top, title, accent, status, stamp, windows, now, *, waiting):
-    label(draw, (16, top), title, 25, accent, "bold")
+def subscription_label(subscription, now):
+    if subscription is None:
+        return "DATE NOT SET", MUTED
+    past = subscription.date < now.date().isoformat()
+    if subscription.event == "ends":
+        return f"ENDS {subscription.date}", AMBER
+    if past:
+        return f"RENEWAL {subscription.date}", AMBER
+    return f"RENEWS {subscription.date}", MUTED
+
+
+def provider_section(draw, top, title, accent, status, stamp, subscription, windows, now,
+                     *, empty, stacked=False):
+    label(draw, (16, top), title, 27, accent, "bold")
+    subscription_text, date_color = subscription_label(subscription, now)
+    label(draw, (16, top + 34), subscription_text, 12, date_color, "bold")
+
     text, color = status
+    label(draw, (304, top), text, 16, color, "bold", "rt")
     if stamp is not None:
-        time_format = "%H:%M" if stamp.date() == now.date() else "%m/%d %H:%M"
-        text += "  ·  " + stamp.strftime(time_format)
-    label(draw, (304, top + 8), text, 12, color, "bold", "rt")
+        time_format = "%H:%M:%S" if stamp.date() == now.date() else "%m/%d %H:%M"
+        label(draw, (304, top + 22), stamp.strftime(time_format), 24, TEXT, "mono", "rt")
 
-    top += 32
+    card_top = top + 58
     if not windows:
-        panel(draw, top, 93)
-        label(draw, (27, top + 35), waiting, 18)
+        panel(draw, card_top, 125)
+        label(draw, (27, card_top + 48), empty, 18)
         return
 
-    spans = ((14, 305),) if len(windows) == 1 else ((14, 155), (165, 305))
-    for window, (left, right) in zip(windows, spans):
-        compact_quota(draw, (left, top, right, top + 92), window, now, accent,
-                      expired=quota_expired(window, now))
+    if stacked:
+        spans = ((14, 305, card_top), (14, 305, card_top + 140))
+    elif len(windows) == 1:
+        spans = ((14, 305, card_top),)
+    else:
+        spans = ((14, 155, card_top), (165, 305, card_top))
+    for window, (left, right, y) in zip(windows, spans):
+        quota_card(draw, (left, y, right, y + 124), window, now, accent)
 
 
-def render_combined(snapshot, claude, now, demo=False):
+def render_dashboard(snapshot, claude, now, preferences, demo=False):
+    mode = preferences.mode
     image = Image.new("RGB", (WIDTH, HEIGHT), BG)
     draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, 159, 3), fill=TEAL)
-    draw.rectangle((160, 0, WIDTH - 1, 3), fill=CLAUDE)
-    label(draw, (15, 17), "AI Usage", 31, TEXT, "bold")
-    label(draw, (304, 24), "DEMO · REMAINING" if demo else "REMAINING", 12, MUTED, "bold", "rt")
-    draw.line((15, 56, 305, 56), fill=BORDER)
+    draw.rectangle((0, 0, WIDTH - 1, 3), fill=CLAUDE if mode == "claude" else TEAL)
+    if mode == "combined":
+        draw.rectangle((160, 0, WIDTH - 1, 3), fill=CLAUDE)
+    label(draw, (15, 19), "AI Usage", 32, TEXT, "bold")
+    label(draw, (304, 26), "DEMO · REMAINING" if demo else "REMAINING", 13, MUTED, "bold", "rt")
+    draw.line((15, 61, 305, 61), fill=BORDER)
 
-    provider_section(draw, 67, "ChatGPT", TEAL, chat_status(snapshot),
-                     snapshot.limits_at, snapshot.windows, now, waiting="Waiting for ChatGPT usage")
-    provider_section(draw, 207, "Claude", CLAUDE, claude_status(claude, now),
-                     claude.received_at if claude else None, claude.windows if claude else None,
-                     now, waiting="Import Claude App usage")
-    token_chart(draw, 343, snapshot, now, bottom=466, heading="CHATGPT TOKENS / 7 DAYS")
+    if mode != "claude":
+        empty = "Quota unavailable" if snapshot.windows is None else "No quota window reported"
+        provider_section(draw, 78, "ChatGPT", TEAL, chat_status(snapshot), snapshot.limits_at,
+                         preferences.chatgpt_subscription, snapshot.windows, now,
+                         empty=empty, stacked=mode == "chatgpt")
+    if mode != "chatgpt":
+        top = 274 if mode == "combined" else 78
+        provider_section(draw, top, "Claude", CLAUDE, claude_status(claude, now),
+                         claude.received_at if claude else None, preferences.claude_subscription,
+                         claude.windows if claude else None, now, empty="Import Claude App usage",
+                         stacked=mode == "claude")
     return image
 
 
 def demo_image(path, mode):
     now = datetime.fromisoformat("2026-11-16T19:24:30+08:00")
-    sample = ClaudeUsage(now, (
-        Window(21, 300, int(now.timestamp()) + 6680),
+    claude = ClaudeUsage(now - timedelta(minutes=7), (
+        Window(0, 300, None),
         Window(54, 10080, int(now.timestamp()) + 259200),
     ), "desktop")
-    end = now.astimezone(UTC).date()
-    snapshot = Snapshot(
-        (Window(25, 300, int(now.timestamp()) + 8650),
-         Window(59, 10080, int(now.timestamp()) + 189000)),
-        {end - timedelta(days=offset): count for offset, count in
-         enumerate((940000, 1600000, 820000, 510000, 2400000, 450000, 730000))},
-        now,
-        now,
-    )
-    if mode == "claude":
-        image = render_claude(sample, now, demo=True)
-    elif mode == "combined":
-        image = render_combined(snapshot, sample, now, demo=True)
-    else:
-        image = render(snapshot, now, demo=True)
-    image.save(path)
+    snapshot = Snapshot((
+        Window(25, 300, int(now.timestamp()) + 8650),
+        Window(59, 10080, int(now.timestamp()) + 189000),
+    ), now)
+    prefs = Preferences(mode=mode, chatgpt_subscription=Subscription("renews", "2026-12-16"),
+                        claude_subscription=Subscription("ends", "2026-12-05"))
+    render_dashboard(snapshot, claude, now, prefs, demo=True).save(path)
 
 
 def main():
@@ -390,12 +292,7 @@ def main():
 
             now = datetime.now().astimezone()
             claude = read_usage() if mode != "chatgpt" else None
-            if mode == "combined":
-                frame = render_combined(snapshot, claude, now)
-            elif mode == "claude":
-                frame = render_claude(claude, now)
-            else:
-                frame = render(snapshot, now)
+            frame = render_dashboard(snapshot, claude, now, preferences)
             try:
                 screen.show(frame, brightness=preferences.brightness)
             except OSError as error:
@@ -411,7 +308,7 @@ def main():
                     logging.info("Claude usage displayed (%s)", claude.source)
                     last_claude_snapshot = claude.received_at
             if args.once:
-                return int(usb_offline or bool(snapshot.errors))
+                return int(usb_offline or snapshot.failed)
             if not stopping:
                 time.sleep(2)
     finally:
