@@ -1,9 +1,9 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
-from turzx import BULK_OUT, CHUNK_BYTES, HEIGHT, WIDTH, Display, command
+from turzx import BULK_OUT, CHUNK_BYTES, HEIGHT, WIDTH, Display, changed_regions, command
 
 
 class DisplayTests(unittest.TestCase):
@@ -43,6 +43,27 @@ class DisplayTests(unittest.TestCase):
         display.show(patched)
         self.assertEqual([bytes(call.args[1]) for call in device.write.call_args_list],
                          [command(197, 9, 11, 9, 11), b"\xe0\x07"])
+
+    def test_distant_changes_are_sent_in_separate_rectangles(self):
+        for second in ((250, 440, 304, 466), (250, 25, 304, 45)):
+            with self.subTest(second=second):
+                previous = Image.new("RGB", (WIDTH, HEIGHT))
+                updated = previous.copy()
+                draw = ImageDraw.Draw(updated)
+                first = (16, 22, 55, 43)
+                draw.rectangle(first, fill="white")
+                draw.rectangle(second, fill="red")
+
+                regions = changed_regions(previous, updated)
+                device_frame = previous.copy()
+                for region in regions:
+                    device_frame.paste(updated.crop(region), region)
+                self.assertEqual(len(regions), 2)
+                self.assertEqual(device_frame.tobytes(), updated.tobytes())
+
+        self.assertEqual(changed_regions(previous, previous), [])
+        self.assertEqual(changed_regions(previous, Image.new("RGB", previous.size, "white")),
+                         [(0, 0, WIDTH, HEIGHT)])
 
     def test_brightness_changes_even_when_the_frame_is_unchanged(self):
         display = Display(None)

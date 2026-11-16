@@ -5,7 +5,7 @@ import struct
 
 import usb.core
 import usb.util
-from PIL import ImageChops
+from PIL import Image, ImageChops
 from serial.tools.list_ports import comports
 
 WIDTH, HEIGHT = 320, 480
@@ -14,6 +14,9 @@ SERIAL_NUMBERS = {"USB35INCHIPS", "USB35INCHIPSV2"}
 DATA_INTERFACE = 1
 BULK_OUT = 0x03
 CHUNK_BYTES = 4096  # Multiple of the endpoint's 64-byte USB packet size.
+BAND_ROWS = 16
+# Bias toward fewer bitmap headers when the pixel cost is close.
+BITMAP_OVERHEAD_PIXELS = 256
 
 
 def find_device(port):
@@ -44,6 +47,56 @@ def find_device(port):
 def command(opcode, x=0, y=0, right=0, bottom=0):
     packed = (x << 38) | (y << 28) | (right << 18) | (bottom << 8) | opcode
     return packed.to_bytes(6, "big")
+
+
+def bitmap_cost(bounds):
+    left, top, right, bottom = bounds
+    return (right - left) * (bottom - top) + BITMAP_OVERHEAD_PIXELS
+
+
+def changed_bands(difference):
+    bounds = difference.getbbox()
+    if bounds is None:
+        return []
+
+    left, top, right, bottom = bounds
+    regions = []
+    for y in range(top, bottom, BAND_ROWS):
+        band = difference.crop((left, y, right, min(y + BAND_ROWS, bottom))).getbbox()
+        if band is None:
+            continue
+        region = (left + band[0], y + band[1], left + band[2], y + band[3])
+        if regions:
+            previous = regions[-1]
+            merged = (min(previous[0], region[0]), previous[1],
+                      max(previous[2], region[2]), region[3])
+            if bitmap_cost(merged) <= bitmap_cost(previous) + bitmap_cost(region):
+                regions[-1] = merged
+                continue
+        regions.append(region)
+    return regions
+
+
+def changed_regions(previous, image):
+    difference = ImageChops.difference(previous, image)
+    bounds = difference.getbbox()
+    if bounds is None:
+        return []
+    rows = changed_bands(difference)
+    columns = [
+        (top, left, bottom, right)
+        for left, top, right, bottom in changed_bands(difference.transpose(Image.Transpose.TRANSPOSE))
+    ]
+    return min(([bounds], rows, columns), key=lambda plan: sum(map(bitmap_cost, plan)))
+
+
+def rgb565(image):
+    rgb = iter(image.tobytes())
+    pixels = bytearray(image.width * image.height * 2)
+    for index, (red, green, blue) in enumerate(zip(rgb, rgb, rgb)):
+        pixels[index * 2] = (green & 0x1C) << 3 | blue >> 3
+        pixels[index * 2 + 1] = (red & 0xF8) | green >> 5
+    return pixels
 
 
 class Display:
@@ -103,17 +156,7 @@ class Display:
             self.send(command(110, x=(100 - brightness) * 255 // 100))
             self.brightness = brightness
 
-        bounds = (0, 0, WIDTH, HEIGHT)
-        if self.previous is not None:
-            bounds = ImageChops.difference(self.previous, image).getbbox()
-            if bounds is None:
-                return
-        left, top, right, bottom = bounds
-        rgb = iter(image.crop(bounds).tobytes())
-        pixels = bytearray((right - left) * (bottom - top) * 2)
-        for index, (red, green, blue) in enumerate(zip(rgb, rgb, rgb)):
-            pixels[index * 2] = (green & 0x1C) << 3 | blue >> 3
-            pixels[index * 2 + 1] = (red & 0xF8) | green >> 5
-
-        self.bitmap(bounds, pixels)
+        regions = [(0, 0, WIDTH, HEIGHT)] if self.previous is None else changed_regions(self.previous, image)
+        for bounds in regions:
+            self.bitmap(bounds, rgb565(image.crop(bounds)))
         self.previous = image

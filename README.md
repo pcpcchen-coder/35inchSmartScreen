@@ -96,6 +96,10 @@ Claude 頁面會顯示最後收到資料的時間。超過 15 分鐘沒收到資
 .venv/bin/python dashboard.py --preview-claude claude-preview.png
 ```
 
+## 小螢幕更新方式
+
+TURZX 透過 USB 接收點陣圖，macOS 會把它辨識為 USB 裝置。面板平常只傳送有變化的小區塊，例如剩餘額度、倒數或最後同步時間。切換 ChatGPT 和 Claude 頁面時，變動範圍較大，仍可能看見重繪。第一次開啟或重新連線時會送完整畫面。
+
 ## 畫面出現橫線或亂碼
 
 從舊版升級時，更新 Python 相依套件，然後重新啟動背景服務。若仍有殘留亂碼，拔掉這台小螢幕的 USB 再插回，讓螢幕重新初始化。
